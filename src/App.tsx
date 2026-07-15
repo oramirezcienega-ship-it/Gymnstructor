@@ -63,6 +63,9 @@ function App() {
     [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
   }>({});
 
+  // Estado para expandir la imagen del ejercicio
+  const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
+
   // Estados para Autenticación y Bloqueo
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isPinSetup, setIsPinSetup] = useState<boolean>(() => !!localStorage.getItem('user_pin'));
@@ -1230,14 +1233,23 @@ function App() {
                       {/* Imagen o Ilustración de Referencia */}
                       {(() => {
                         const imgUrl = ex.image_data || getExerciseImage(ex.name);
+                        const isExpanded = expandedExerciseId === ex.id;
                         return imgUrl ? (
-                          <div className="w-full h-32 overflow-hidden bg-slate-950 relative border-b border-slate-900/40 flex items-center justify-center">
+                          <div 
+                            onClick={() => setExpandedExerciseId(isExpanded ? null : ex.id)}
+                            className={`w-full overflow-hidden bg-slate-950 relative border-b border-slate-900/40 flex items-center justify-center cursor-pointer transition-all duration-300 ${isExpanded ? 'h-72' : 'h-32'}`}
+                          >
                             <img 
                               src={imgUrl} 
                               alt={ex.name} 
-                              className="w-full h-full object-cover opacity-80"
+                              className={`w-full h-full opacity-80 transition-all duration-300 ${isExpanded ? 'object-contain' : 'object-cover'}`}
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 to-transparent"></div>
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 to-transparent pointer-events-none"></div>
+                            
+                            {/* Indicador visual de zoom */}
+                            <div className="absolute top-2 right-2 bg-slate-950/80 px-2 py-0.5 rounded-md text-[8px] font-bold text-slate-400 border border-slate-900 pointer-events-none tracking-wider uppercase">
+                              {isExpanded ? 'Ver menos' : 'Ampliar'}
+                            </div>
                           </div>
                         ) : (
                           // Placeholder estilizado con mancuerna
