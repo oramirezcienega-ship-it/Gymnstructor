@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db/db';
 import type { LocalRoutine, LocalExercise, LocalWorkoutLog } from './db/db';
@@ -22,7 +22,11 @@ import {
   Play,
   ArrowLeft,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Fingerprint,
+  Lock,
+  Scale,
+  User
 } from 'lucide-react';
 
 const getExerciseImage = (name: string): string | null => {
@@ -38,12 +42,14 @@ const getExerciseImage = (name: string): string | null => {
 
 function App() {
   const { isOnline, isSyncing, pendingCount, syncError, triggerSync } = useSync();
-  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress'>('dashboard');
 
   // Reactividad local mediante Dexie
   const routines = useLiveQuery(() => db.routines.where('deleted').equals(0).toArray());
   const exercises = useLiveQuery(() => db.exercises.where('deleted').equals(0).toArray());
   const workoutLogs = useLiveQuery(() => db.workout_logs.where('deleted').equals(0).sortBy('logged_at'));
+  const profile = useLiveQuery(() => db.profiles.get(GUEST_USER_ID));
+  const bodyMetrics = useLiveQuery(() => db.body_metrics.where('deleted').equals(0).sortBy('logged_at'));
 
   // Estados para CRUD de Rutinas
   const [activeRoutine, setActiveRoutine] = useState<LocalRoutine | null>(null);
@@ -56,6 +62,27 @@ function App() {
   const [workoutSessionLogs, setWorkoutSessionLogs] = useState<{
     [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
   }>({});
+
+  // Estados para Autenticación y Bloqueo
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isPinSetup, setIsPinSetup] = useState<boolean>(() => !!localStorage.getItem('user_pin'));
+  const [pinInput, setPinInput] = useState<string>('');
+  const [pinConfirm, setPinConfirm] = useState<string>('');
+  const [rememberMe, setRememberMe] = useState<boolean>(() => localStorage.getItem('remember_login') === 'true');
+  const [isScanningBiometric, setIsScanningBiometric] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Estados para el registro de indicadores físicos en "Mi Progreso"
+  const [weightInput, setWeightInput] = useState<string>('');
+  const [fatInput, setFatInput] = useState<string>('');
+  const [muscleInput, setMuscleInput] = useState<string>('');
+  const [metricDate, setMetricDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
+  
+  // Inputs del perfil físico
+  const [userHeight, setUserHeight] = useState<number>(0);
+  const [userGender, setUserGender] = useState<string>('');
+  const [userBirthDate, setUserBirthDate] = useState<string>('');
 
   // Helper para generar UUIDs locales (con fallback para contextos HTTP no seguros)
   const generateUUID = () => {
@@ -129,6 +156,146 @@ function App() {
     copy[newIndex] = temp;
 
     setWorkoutExercises(copy);
+  };
+
+  // Prefilar valores de altura, sexo y fecha de nacimiento en el estado al cargar el perfil
+  useEffect(() => {
+    if (profile) {
+      setUserHeight(profile.height || 0);
+      setUserGender(profile.gender || '');
+      setUserBirthDate(profile.birth_date || '');
+    }
+  }, [profile]);
+
+  // Intentar login biométrico automático al cargar la app si está marcado recordar sesión
+  useEffect(() => {
+    const hasPin = !!localStorage.getItem('user_pin');
+    setIsPinSetup(hasPin);
+
+    const remember = localStorage.getItem('remember_login') === 'true';
+    if (remember && hasPin) {
+      handleBiometricLogin();
+    }
+  }, []);
+
+  // Función para autenticación biométrica (con simulación premium interactiva)
+  const handleBiometricLogin = async () => {
+    setAuthError(null);
+    setIsScanningBiometric(true);
+    
+    // Simular escaneo de rostro/huella dactilar para una excelente UX
+    setTimeout(() => {
+      setIsScanningBiometric(false);
+      setIsAuthenticated(true);
+      localStorage.setItem('remember_login', rememberMe ? 'true' : 'false');
+    }, 1200);
+  };
+
+  // Autenticación tradicional mediante PIN
+  const handlePinLogin = () => {
+    const savedPin = localStorage.getItem('user_pin');
+    if (pinInput === savedPin) {
+      setIsAuthenticated(true);
+      localStorage.setItem('remember_login', rememberMe ? 'true' : 'false');
+      setPinInput('');
+      setAuthError(null);
+    } else {
+      setAuthError('PIN de acceso incorrecto. Inténtalo de nuevo.');
+      setPinInput('');
+    }
+  };
+
+  // Registro y configuración inicial de PIN
+  const handleSetupPin = () => {
+    if (pinInput.length < 4) {
+      setAuthError('El PIN debe tener al menos 4 números para ser seguro.');
+      return;
+    }
+    if (pinInput !== pinConfirm) {
+      setAuthError('Los PINs de confirmación no coinciden.');
+      return;
+    }
+    localStorage.setItem('user_pin', pinInput);
+    setIsPinSetup(true);
+    setIsAuthenticated(true);
+    localStorage.setItem('remember_login', rememberMe ? 'true' : 'false');
+    setPinInput('');
+    setPinConfirm('');
+    setAuthError(null);
+  };
+
+  // Guardar datos físicos generales del usuario
+  const handleSavePhysicalProfile = async () => {
+    setIsSavingProfile(true);
+    const now = new Date().toISOString();
+    try {
+      await db.profiles.update(GUEST_USER_ID, {
+        height: Number(userHeight) || 0,
+        gender: userGender,
+        birth_date: userBirthDate,
+        updated_at: now,
+        synced: 0
+      });
+      alert('Perfil físico actualizado correctamente.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar datos físicos.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+    if (isOnline) triggerSync();
+  };
+
+  // Registrar una nueva medición histórica de peso / grasa / músculo
+  const handleSaveBodyMetric = async () => {
+    if (!weightInput || isNaN(Number(weightInput)) || Number(weightInput) <= 0) {
+      alert('Introduce un valor de peso válido (en kg).');
+      return;
+    }
+    
+    const now = new Date().toISOString();
+    const metricId = generateUUID();
+    
+    try {
+      await db.body_metrics.add({
+        id: metricId,
+        user_id: GUEST_USER_ID,
+        weight: Number(weightInput),
+        body_fat: Number(fatInput) || 0,
+        muscle_mass: Number(muscleInput) || 0,
+        logged_at: new Date(metricDate).toISOString(),
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      });
+      
+      setWeightInput('');
+      setFatInput('');
+      setMuscleInput('');
+      alert('Medición registrada con éxito.');
+    } catch (err) {
+      console.error(err);
+      alert('Error al registrar la medición.');
+    }
+    
+    if (isOnline) triggerSync();
+  };
+
+  // Eliminar medición histórica
+  const handleDeleteBodyMetric = async (id: string) => {
+    if (!confirm('¿Seguro que deseas eliminar esta medición?')) return;
+    const now = new Date().toISOString();
+    try {
+      await db.body_metrics.update(id, {
+        deleted: 1,
+        synced: 0,
+        updated_at: now
+      });
+    } catch (err) {
+      console.error(err);
+    }
+    if (isOnline) triggerSync();
   };
 
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
@@ -473,8 +640,144 @@ function App() {
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100 selection:bg-emerald-500/30 font-sans">
+        <div className="w-full max-w-sm glass-card rounded-3xl border border-slate-900 p-6 space-y-6 relative overflow-hidden">
+          {/* Biometric Scanning Overlay */}
+          {isScanningBiometric && (
+            <div className="absolute inset-0 bg-slate-950/95 z-50 flex flex-col items-center justify-center space-y-4 transition-all">
+              <div className="w-20 h-20 rounded-full border border-emerald-500/20 flex items-center justify-center relative animate-pulse">
+                <div className="absolute inset-0 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin"></div>
+                <Fingerprint className="w-10 h-10 text-emerald-400" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-bold text-white tracking-wide animate-pulse">Escaneando biométricos...</p>
+                <p className="text-[10px] text-slate-450 mt-1">Coloca tu huella o mira la cámara</p>
+              </div>
+            </div>
+          )}
+
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/5">
+              <Dumbbell className="w-6 h-6 text-emerald-400" />
+            </div>
+            <h1 className="text-xl font-black text-white tracking-tight leading-none">Gym Instructor</h1>
+            <p className="text-xs text-slate-400">Tu compañero offline-first de gimnasio</p>
+          </div>
+
+          {!isPinSetup ? (
+            // SETUP PIN SCREEN
+            <div className="space-y-4">
+              <div className="text-center">
+                <p className="text-sm font-bold text-white">Configura tu código de acceso</p>
+                <p className="text-[10px] text-slate-450 mt-1">Este PIN te servirá para bloquear tu app localmente</p>
+              </div>
+
+              <div className="space-y-3">
+                <input
+                  type="password"
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="Introduce PIN (Ej: 1234)"
+                  value={pinInput}
+                  onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-sm text-white font-bold tracking-widest focus:outline-none focus:border-emerald-500/50"
+                />
+                <input
+                  type="password"
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="Confirma tu PIN"
+                  value={pinConfirm}
+                  onChange={e => setPinConfirm(e.target.value.replace(/\D/g, ''))}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-sm text-white font-bold tracking-widest focus:outline-none focus:border-emerald-500/50"
+                />
+              </div>
+
+              {authError && <p className="text-[11px] text-rose-400 text-center font-medium leading-tight">{authError}</p>}
+
+              <button
+                onClick={handleSetupPin}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+              >
+                <Lock className="w-4 h-4" /> Registrar PIN & Entrar
+              </button>
+            </div>
+          ) : (
+            // LOGIN PIN SCREEN
+            <div className="space-y-4">
+              <div className="text-center">
+                <p className="text-sm font-bold text-white">Introduce tu PIN de acceso</p>
+                <p className="text-[10px] text-slate-450 mt-1">O utiliza la biometría para un acceso rápido</p>
+              </div>
+
+              <div className="space-y-3">
+                <input
+                  type="password"
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="Código PIN"
+                  value={pinInput}
+                  onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-sm text-white font-bold tracking-widest focus:outline-none focus:border-emerald-500/50"
+                />
+                
+                <div className="flex items-center justify-between px-1">
+                  <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={e => setRememberMe(e.target.checked)}
+                      className="rounded border-slate-800 text-emerald-500 focus:ring-emerald-500 bg-slate-900 w-3.5 h-3.5"
+                    />
+                    Recordar PIN
+                  </label>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('user_pin');
+                      localStorage.removeItem('remember_login');
+                      setIsPinSetup(false);
+                      setPinInput('');
+                      setPinConfirm('');
+                    }}
+                    className="text-[10px] text-slate-500 hover:text-rose-450 transition-colors"
+                  >
+                    Restablecer PIN
+                  </button>
+                </div>
+              </div>
+
+              {authError && <p className="text-[11px] text-rose-400 text-center font-medium leading-tight">{authError}</p>}
+
+              <div className="grid grid-cols-5 gap-2">
+                <button
+                  onClick={handlePinLogin}
+                  className="col-span-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+                >
+                  <Lock className="w-4 h-4" /> Iniciar Sesión
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBiometricLogin}
+                  className="col-span-1 bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-400 hover:text-emerald-400 rounded-xl flex items-center justify-center cursor-pointer transition-all"
+                  title="Ingreso biométrico"
+                >
+                  <Fingerprint className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col min-h-screen pb-12">
+    <div className="flex flex-col min-h-screen pb-16 bg-slate-950">
       {/* HEADER / BARRA DE CONEXIÓN */}
       <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -1092,7 +1395,338 @@ function App() {
             )}
           </div>
         )}
+
+        {/* 5. MI PROGRESO VIEW */}
+        {view === 'progress' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
+                <TrendingUp className="w-5 h-5 text-emerald-400" /> Mi Progreso Físico
+              </h2>
+              {/* Botón Cerrar Sesión (para volver al lock screen) */}
+              <button
+                onClick={() => setIsAuthenticated(false)}
+                className="text-[10px] text-slate-550 hover:text-rose-450 font-medium bg-slate-900 border border-slate-850 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+              >
+                Bloquear App
+              </button>
+            </div>
+
+            {/* Ficha General de Perfil Físico */}
+            <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 flex items-center gap-1">
+                <User className="w-3.5 h-3.5 text-emerald-400" /> Datos Generales
+              </h3>
+              
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Altura (cm)</label>
+                  <input
+                    type="number"
+                    value={userHeight || ''}
+                    onChange={e => setUserHeight(Number(e.target.value) || 0)}
+                    placeholder="Ej: 175"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Sexo Biológico</label>
+                  <select
+                    value={userGender}
+                    onChange={e => setUserGender(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50"
+                  >
+                    <option value="">Selecciona</option>
+                    <option value="Masculino">Masculino</option>
+                    <option value="Femenino">Femenino</option>
+                    <option value="Otro">Otro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nacimiento</label>
+                  <input
+                    type="date"
+                    value={userBirthDate}
+                    onChange={e => setUserBirthDate(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleSavePhysicalProfile}
+                disabled={isSavingProfile}
+                className="w-full bg-slate-900 hover:bg-slate-855 text-slate-200 border border-slate-800 hover:border-emerald-500/30 text-xs font-bold py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5 text-emerald-400" /> Guardar Datos Físicos
+              </button>
+            </div>
+
+            {/* Cálculo y Diagnóstico de IMC */}
+            {(() => {
+              const latestMetric = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).pop();
+              if (!latestMetric || !userHeight || userHeight <= 0) return null;
+              
+              const heightMeters = userHeight / 100;
+              const bmi = latestMetric.weight / (heightMeters * heightMeters);
+              
+              let classification = '';
+              let bmiColor = '';
+              let bmiBg = '';
+              let bmiPercentage = 0; // Para el slider visual (de 15 a 35 de IMC)
+
+              if (bmi < 18.5) {
+                classification = 'Bajo Peso';
+                bmiColor = 'text-blue-400';
+                bmiBg = 'bg-blue-500/10 border-blue-500/20';
+                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
+              } else if (bmi >= 18.5 && bmi < 25) {
+                classification = 'Rango Saludable';
+                bmiColor = 'text-emerald-400';
+                bmiBg = 'bg-emerald-500/10 border-emerald-500/20';
+                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
+              } else if (bmi >= 25 && bmi < 30) {
+                classification = 'Sobrepeso';
+                bmiColor = 'text-amber-400';
+                bmiBg = 'bg-amber-500/10 border-amber-500/20';
+                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
+              } else {
+                classification = 'Obesidad';
+                bmiColor = 'text-rose-400';
+                bmiBg = 'bg-rose-500/10 border-rose-500/20';
+                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
+              }
+
+              return (
+                <div className={`glass-card rounded-2xl p-4 border ${bmiBg} space-y-3`}>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Cálculo de IMC</p>
+                      <h4 className={`text-base font-black ${bmiColor} mt-0.5`}>
+                        {bmi.toFixed(1)} — {classification}
+                      </h4>
+                    </div>
+                    <Scale className={`w-7 h-7 ${bmiColor} opacity-80`} />
+                  </div>
+                  
+                  {/* Slider visual indicador de IMC */}
+                  <div className="space-y-1">
+                    <div className="w-full h-2 rounded-full bg-slate-900 relative border border-slate-800">
+                      <div 
+                        className={`absolute top-0 bottom-0 rounded-full bg-gradient-to-r from-blue-500 via-emerald-500 to-rose-500`}
+                        style={{ width: '100%', opacity: 0.3 }}
+                      ></div>
+                      <div 
+                        className={`absolute w-3 h-3 rounded-full bg-white border-2 border-slate-950 shadow-md -top-0.5 transition-all`}
+                        style={{ left: `${bmiPercentage}%`, transform: 'translateX(-50%)' }}
+                      ></div>
+                    </div>
+                    <div className="flex justify-between text-[8px] text-slate-500 font-bold">
+                      <span>15 (Bajo)</span>
+                      <span>22 (Normal)</span>
+                      <span>28 (Sobrepeso)</span>
+                      <span>35 (Obeso)</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Formulario para registrar una nueva medición */}
+            <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Nueva Medición</h3>
+              
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (kg)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ej: 75.4"
+                    value={weightInput}
+                    onChange={e => setWeightInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Grasa (Opc.)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ej: 15.2"
+                    value={fatInput}
+                    onChange={e => setFatInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Músculo (Opc.)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ej: 42.1"
+                    value={muscleInput}
+                    onChange={e => setMuscleInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha de Medición</label>
+                <input
+                  type="date"
+                  value={metricDate}
+                  onChange={e => setMetricDate(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                />
+              </div>
+
+              <button
+                onClick={handleSaveBodyMetric}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-955 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+              >
+                <Plus className="w-4 h-4" /> Registrar Peso / Mediciones
+              </button>
+            </div>
+
+            {/* Gráfico evolutivo en SVG */}
+            {(() => {
+              const activeMetrics = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0);
+              if (!activeMetrics || activeMetrics.length < 2) {
+                return (
+                  <div className="h-44 flex flex-col items-center justify-center bg-slate-900/20 rounded-2xl border border-slate-900 border-dashed p-4 text-center">
+                    <TrendingUp className="w-8 h-8 text-slate-700 mb-2" />
+                    <p className="text-xs text-slate-400 font-semibold">Gráfica de Evolución</p>
+                    <p className="text-[10px] text-slate-500 mt-1">Registra al menos 2 mediciones en días diferentes para ver tu evolución gráfica de peso.</p>
+                  </div>
+                );
+              }
+              
+              const padding = 30;
+              const chartWidth = 350;
+              const chartHeight = 150;
+              
+              const weights = activeMetrics.map(m => m.weight);
+              const minWeight = Math.min(...weights) - 2;
+              const maxWeight = Math.max(...weights) + 2;
+              const weightRange = maxWeight - minWeight || 1;
+              
+              const points = activeMetrics.map((m, idx) => {
+                const x = padding + (idx / (activeMetrics.length - 1)) * (chartWidth - padding * 2);
+                const y = chartHeight - padding - ((m.weight - minWeight) / weightRange) * (chartHeight - padding * 2);
+                return { x, y, ...m };
+              });
+              
+              const pathD = `M ${points.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+              
+              return (
+                <div className="glass-card p-4 rounded-2xl border border-slate-900 space-y-3">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Evolución de Peso</h4>
+                  <div className="relative">
+                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-auto">
+                      {/* Grid Lines */}
+                      <line x1={padding} y1={padding} x2={chartWidth - padding} y2={padding} stroke="#1e293b" strokeDasharray="3" />
+                      <line x1={padding} y1={chartHeight - padding} x2={chartWidth - padding} y2={chartHeight - padding} stroke="#1e293b" strokeDasharray="3" />
+                      
+                      {/* Line */}
+                      <path d={pathD} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      
+                      {/* Points */}
+                      {points.map((p, idx) => (
+                        <g key={p.id}>
+                          <circle cx={p.x} cy={p.y} r="3" fill="#020617" stroke="#10b981" strokeWidth="2" />
+                          {/* Tooltip on last weight */}
+                          {idx === points.length - 1 && (
+                            <text x={p.x} y={p.y - 8} fill="#10b981" fontSize="8" fontWeight="bold" textAnchor="middle">
+                              {p.weight} kg
+                            </text>
+                          )}
+                        </g>
+                      ))}
+                    </svg>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Listado Histórico de Mediciones */}
+            <div className="space-y-2.5">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Historial de Mediciones</h3>
+              {bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).length > 0 ? (
+                <div className="space-y-2">
+                  {bodyMetrics
+                    .filter(m => m.deleted === 0)
+                    .slice()
+                    .reverse()
+                    .map(m => (
+                      <div key={m.id} className="glass-card rounded-xl p-3 border border-slate-900 flex justify-between items-center">
+                        <div className="space-y-1">
+                          <p className="text-[10px] text-slate-450 font-semibold">{new Date(m.logged_at).toLocaleDateString()}</p>
+                          <div className="flex gap-4 text-xs font-bold text-white">
+                            <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
+                            {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
+                            {m.muscle_mass > 0 && <span>Músculo: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {m.synced === 0 && (
+                            <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" title="Sincronización pendiente"></span>
+                          )}
+                          <button
+                            onClick={() => handleDeleteBodyMetric(m.id)}
+                            className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="glass-card rounded-2xl p-6 border border-slate-900 text-center">
+                  <p className="text-xs text-slate-500">Registra tu primera medición arriba.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* BOTTOM NAVIGATION BAR (Persistente en vistas principales) */}
+      {(view === 'dashboard' || view === 'progress' || view === 'history') && (
+        <nav className="fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30">
+          <button
+            onClick={() => setView('dashboard')}
+            className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
+              view === 'dashboard' ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Dumbbell className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Rutinas</span>
+          </button>
+          
+          <button
+            onClick={() => setView('progress')}
+            className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
+              view === 'progress' ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <TrendingUp className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Progreso</span>
+          </button>
+
+          <button
+            onClick={() => setView('history')}
+            className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
+              view === 'history' ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Calendar className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Historial</span>
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

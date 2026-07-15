@@ -5,6 +5,9 @@ import type { Table } from 'dexie';
 export interface LocalProfile {
   id: string;
   email: string;
+  height: number;
+  gender: string;
+  birth_date: string;
   created_at: string;
   updated_at: string;
   synced: number; // 0 = false, 1 = true
@@ -48,11 +51,25 @@ export interface LocalWorkoutLog {
   synced: number; // 0 = false, 1 = true
 }
 
+export interface LocalBodyMetric {
+  id: string;
+  user_id: string;
+  weight: number;
+  body_fat: number;
+  muscle_mass: number;
+  logged_at: string;
+  deleted: number; // 0 = false, 1 = true
+  created_at: string;
+  updated_at: string;
+  synced: number; // 0 = false, 1 = true
+}
+
 class GymDatabase extends Dexie {
   profiles!: Table<LocalProfile>;
   routines!: Table<LocalRoutine>;
   exercises!: Table<LocalExercise>;
   workout_logs!: Table<LocalWorkoutLog>;
+  body_metrics!: Table<LocalBodyMetric>;
 
   constructor() {
     super('GymDatabase');
@@ -60,7 +77,8 @@ class GymDatabase extends Dexie {
       profiles: 'id, email, updated_at, synced',
       routines: 'id, user_id, name, deleted, updated_at, synced',
       exercises: 'id, routine_id, name, muscle_group, deleted, updated_at, synced',
-      workout_logs: 'id, exercise_id, logged_at, deleted, updated_at, synced'
+      workout_logs: 'id, exercise_id, logged_at, deleted, updated_at, synced',
+      body_metrics: 'id, user_id, logged_at, deleted, updated_at, synced'
     });
   }
 }

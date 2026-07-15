@@ -19,6 +19,9 @@ export function useSync() {
       await db.profiles.put({
         id: GUEST_USER_ID,
         email: GUEST_USER_EMAIL,
+        height: 0.0,
+        gender: '',
+        birth_date: '',
         created_at: now,
         updated_at: now,
         synced: 0,
@@ -32,7 +35,8 @@ export function useSync() {
     const pRoutines = await db.routines.where('synced').equals(0).count();
     const pExercises = await db.exercises.where('synced').equals(0).count();
     const pLogs = await db.workout_logs.where('synced').equals(0).count();
-    setPendingCount(pProfiles + pRoutines + pExercises + pLogs);
+    const pMetrics = await db.body_metrics.where('synced').equals(0).count();
+    setPendingCount(pProfiles + pRoutines + pExercises + pLogs + pMetrics);
   }, []);
 
   // Subir cambios locales a Supabase
@@ -53,6 +57,9 @@ export function useSync() {
           await supabase.from('profiles').upsert({
             id: profile.id,
             email: profile.email,
+            height: profile.height,
+            gender: profile.gender,
+            birth_date: profile.birth_date,
             updated_at: profile.updated_at,
           });
         } else {
@@ -62,6 +69,9 @@ export function useSync() {
         await supabase.from('profiles').insert({
           id: profile.id,
           email: profile.email,
+          height: profile.height,
+          gender: profile.gender,
+          birth_date: profile.birth_date,
           created_at: profile.created_at,
           updated_at: profile.updated_at,
         });
@@ -219,6 +229,57 @@ export function useSync() {
         await db.workout_logs.update(log.id, { synced: 1 });
       }
     }
+
+    // 5. Sincronizar métricas corporales (Body Metrics)
+    const unsyncedMetrics = await db.body_metrics.where('synced').equals(0).toArray();
+    for (const metric of unsyncedMetrics) {
+      const { data: serverMetric } = await supabase
+        .from('body_metrics')
+        .select('*')
+        .eq('id', metric.id)
+        .maybeSingle();
+
+      if (serverMetric) {
+        const localTime = new Date(metric.updated_at).getTime();
+        const serverTime = new Date(serverMetric.updated_at).getTime();
+        if (localTime > serverTime) {
+          await supabase.from('body_metrics').upsert({
+            id: metric.id,
+            user_id: metric.user_id,
+            weight: metric.weight,
+            body_fat: metric.body_fat,
+            muscle_mass: metric.muscle_mass,
+            logged_at: metric.logged_at,
+            deleted: metric.deleted === 1,
+            updated_at: metric.updated_at,
+          });
+        } else {
+          await db.body_metrics.put({
+            ...serverMetric,
+            deleted: serverMetric.deleted ? 1 : 0,
+            synced: 1,
+          });
+        }
+      } else {
+        await supabase.from('body_metrics').insert({
+          id: metric.id,
+          user_id: metric.user_id,
+          weight: metric.weight,
+          body_fat: metric.body_fat,
+          muscle_mass: metric.muscle_mass,
+          logged_at: metric.logged_at,
+          deleted: metric.deleted === 1,
+          created_at: metric.created_at,
+          updated_at: metric.updated_at,
+        });
+      }
+
+      if (metric.deleted === 1) {
+        await db.body_metrics.delete(metric.id);
+      } else {
+        await db.body_metrics.update(metric.id, { synced: 1 });
+      }
+    }
   }, []);
 
   // Descargar cambios desde el servidor
@@ -320,6 +381,36 @@ export function useSync() {
               deleted: 0,
               created_at: sLog.created_at,
               updated_at: sLog.updated_at,
+              synced: 1,
+            });
+          }
+        }
+      }
+    }
+
+    // 5. Descargar métricas corporales
+    const { data: serverMetrics } = await supabase
+      .from('body_metrics')
+      .select('*')
+      .gt('updated_at', lastSync);
+
+    if (serverMetrics) {
+      for (const sMetric of serverMetrics) {
+        const local = await db.body_metrics.get(sMetric.id);
+        if (!local || local.synced === 1 || new Date(sMetric.updated_at).getTime() > new Date(local.updated_at).getTime()) {
+          if (sMetric.deleted) {
+            await db.body_metrics.delete(sMetric.id);
+          } else {
+            await db.body_metrics.put({
+              id: sMetric.id,
+              user_id: sMetric.user_id,
+              weight: Number(sMetric.weight),
+              body_fat: Number(sMetric.body_fat),
+              muscle_mass: Number(sMetric.muscle_mass),
+              logged_at: sMetric.logged_at,
+              deleted: 0,
+              created_at: sMetric.created_at,
+              updated_at: sMetric.updated_at,
               synced: 1,
             });
           }
