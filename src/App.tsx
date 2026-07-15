@@ -220,6 +220,19 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  const getErrorMessage = (err: any): string => {
+    if (!err) return 'Error desconocido';
+    if (typeof err === 'string') return err;
+    if (err.message && typeof err.message === 'string') {
+      if (err.message === '{}' || err.message.trim() === '') {
+        return 'Error de conexión o de credenciales (Servidor Supabase no responde o clave inválida).';
+      }
+      return err.message;
+    }
+    if (err.error_description && typeof err.error_description === 'string') return err.error_description;
+    return JSON.stringify(err);
+  };
+
   const handleSignIn = async () => {
     if (!emailInput.trim() || !passwordInput.trim()) {
       setAuthError('Introduce tu correo y contraseña.');
@@ -265,7 +278,7 @@ function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setAuthError(err.message || 'Error al iniciar sesión. Revisa tus credenciales.');
+      setAuthError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -297,7 +310,7 @@ function App() {
       if (data.user) {
         const now = new Date().toISOString();
         // Guardar perfil en Supabase
-        await supabase.from('profiles').insert({
+        const { error: dbError } = await supabase.from('profiles').insert({
           id: data.user.id,
           email: data.user.email,
           name: nameInput,
@@ -307,6 +320,7 @@ function App() {
           created_at: now,
           updated_at: now
         });
+        if (dbError) throw dbError;
 
         // Guardar perfil local en IndexedDB
         await db.profiles.put({
@@ -329,7 +343,7 @@ function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setAuthError(err.message || 'Error al registrarse.');
+      setAuthError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
