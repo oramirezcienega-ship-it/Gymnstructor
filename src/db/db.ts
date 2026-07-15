@@ -33,6 +33,7 @@ export interface LocalExercise {
   created_at: string;
   updated_at: string;
   synced: number; // 0 = false, 1 = true
+  image_data?: string; // Imagen en base64 para soporte offline completo
 }
 
 export interface LocalWorkoutLog {

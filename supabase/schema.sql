@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS public.exercises (
     reps INTEGER NOT NULL DEFAULT 10,
     weight NUMERIC NOT NULL DEFAULT 0.0,
     deleted BOOLEAN DEFAULT false NOT NULL,
+    image_data TEXT, -- Imagen codificada en base64 para soporte offline completo
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );

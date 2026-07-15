@@ -9,6 +9,9 @@ import {
   Trash2,
   Edit,
   Save,
+  X,
+  ChevronUp,
+  ChevronDown,
   Cloud,
   CloudOff,
   RefreshCw,
@@ -64,6 +67,68 @@ function App() {
       const v = c === 'x' ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     });
+  };
+
+  // Estado local para los ejercicios en curso (permite reordenar dinámicamente)
+  const [workoutExercises, setWorkoutExercises] = useState<LocalExercise[]>([]);
+
+  // Compresión y conversión de imágenes para almacenamiento local ligero y sincronización
+  const compressAndConvertToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 450;
+          const MAX_HEIGHT = 450;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          
+          // Comprimir al 70% de calidad en JPEG para reducir huella en BD (IndexedDB y Supabase)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+          resolve(dataUrl);
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  // Función para reordenar dinámicamente el orden de los ejercicios en el entrenamiento activo
+  const handleMoveExercise = (exerciseId: string, direction: 'up' | 'down') => {
+    const index = workoutExercises.findIndex(ex => ex.id === exerciseId);
+    if (index === -1) return;
+
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= workoutExercises.length) return;
+
+    const copy = [...workoutExercises];
+    // Intercambiar
+    const temp = copy[index];
+    copy[index] = copy[newIndex];
+    copy[newIndex] = temp;
+
+    setWorkoutExercises(copy);
   };
 
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
@@ -255,7 +320,8 @@ function App() {
         deleted: 0,
         created_at: ex.created_at || now,
         updated_at: now,
-        synced: 0
+        synced: 0,
+        image_data: ex.image_data
       };
       await db.exercises.put(exData);
     }
@@ -328,6 +394,7 @@ function App() {
     }
     
     setWorkoutSessionLogs(initialSession);
+    setWorkoutExercises(rExercises);
     setView('workout');
   };
 
@@ -661,9 +728,47 @@ function App() {
                           onChange={e => handleExerciseChange(index, 'name', e.target.value)}
                           className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
                         />
+                        
+                        {/* Subir/Ver Imagen de Referencia */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {ex.image_data ? (
+                            <div className="relative w-8 h-8 rounded-lg border border-slate-850 overflow-hidden group" title="Haz clic en la X para eliminar">
+                              <img src={ex.image_data} className="w-full h-full object-cover" />
+                              <button
+                                type="button"
+                                onClick={() => handleExerciseChange(index, 'image_data', undefined)}
+                                className="absolute inset-0 bg-rose-950/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-rose-400 cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <label className="w-8 h-8 rounded-lg border border-dashed border-slate-800 hover:border-emerald-500/50 flex items-center justify-center cursor-pointer text-slate-500 hover:text-emerald-400 transition-all" title="Subir imagen de referencia">
+                              <Plus className="w-3.5 h-3.5" />
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    try {
+                                      const base64 = await compressAndConvertToBase64(file);
+                                      handleExerciseChange(index, 'image_data', base64);
+                                    } catch (err) {
+                                      console.error("Error al cargar imagen", err);
+                                      alert("Error al procesar la imagen");
+                                    }
+                                  }
+                                }}
+                              />
+                            </label>
+                          )}
+                        </div>
+
                         <button
                           onClick={() => handleRemoveExerciseRow(index)}
-                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
+                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -765,9 +870,7 @@ function App() {
 
             {/* Lista de ejercicios para el entrenamiento */}
             <div className="space-y-4">
-              {exercises
-                ?.filter(ex => ex.routine_id === workoutRoutine.id && ex.deleted === 0)
-                .map(ex => {
+              {workoutExercises.map((ex, idx) => {
                   const series = workoutSessionLogs[ex.id] || [];
                   const allCompleted = series.length > 0 && series.every(s => s.completed);
 
@@ -792,9 +895,33 @@ function App() {
                             </p>
                           )}
                         </div>
-                        {allCompleted && (
-                          <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {/* Botones de Reordenamiento */}
+                          <div className="flex items-center gap-1 mr-1">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => handleMoveExercise(ex.id, 'up')}
+                              className="p-1 rounded-lg bg-slate-950 border border-slate-900 text-slate-500 hover:text-white disabled:opacity-30 disabled:hover:text-slate-500 transition-colors cursor-pointer"
+                              title="Subir orden"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === workoutExercises.length - 1}
+                              onClick={() => handleMoveExercise(ex.id, 'down')}
+                              className="p-1 rounded-lg bg-slate-950 border border-slate-900 text-slate-500 hover:text-white disabled:opacity-30 disabled:hover:text-slate-500 transition-colors cursor-pointer"
+                              title="Bajar orden"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          
+                          {allCompleted && (
+                            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                          )}
+                        </div>
                       </div>
 
                       {/* Imagen o Ilustración de Referencia */}

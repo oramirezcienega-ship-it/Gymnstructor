@@ -139,6 +139,7 @@ export function useSync() {
             weight: exercise.weight,
             deleted: exercise.deleted === 1,
             updated_at: exercise.updated_at,
+            image_data: exercise.image_data,
           });
         } else {
           await db.exercises.put({
@@ -159,6 +160,7 @@ export function useSync() {
           deleted: exercise.deleted === 1,
           created_at: exercise.created_at,
           updated_at: exercise.updated_at,
+          image_data: exercise.image_data,
         });
       }
 
@@ -289,6 +291,7 @@ export function useSync() {
               created_at: sExercise.created_at,
               updated_at: sExercise.updated_at,
               synced: 1,
+              image_data: sExercise.image_data,
             });
           }
         }
