@@ -1229,7 +1229,7 @@ function App() {
 
                       {/* Imagen o Ilustración de Referencia */}
                       {(() => {
-                        const imgUrl = getExerciseImage(ex.name);
+                        const imgUrl = ex.image_data || getExerciseImage(ex.name);
                         return imgUrl ? (
                           <div className="w-full h-32 overflow-hidden bg-slate-950 relative border-b border-slate-900/40 flex items-center justify-center">
                             <img 
