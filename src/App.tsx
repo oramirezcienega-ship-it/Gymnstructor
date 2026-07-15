@@ -22,6 +22,16 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+const getExerciseImage = (name: string): string | null => {
+  const norm = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Quitar acentos
+  if (norm.includes('banca') || norm.includes('bench press') || norm.includes('smith')) {
+    return '/exercises/press_banca.png';
+  }
+  if (norm.includes('sentadilla') || norm.includes('squat')) {
+    return '/exercises/sentadilla.png';
+  }
+  return null;
+};
 
 function App() {
   const { isOnline, isSyncing, pendingCount, syncError, triggerSync } = useSync();
@@ -283,20 +293,39 @@ function App() {
   };
 
   // --- ENTRENAMIENTO ACTIVO ---
-  const handleStartWorkout = (routine: LocalRoutine) => {
+  const handleStartWorkout = async (routine: LocalRoutine) => {
     setWorkoutRoutine(routine);
     const rExercises = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
     
     // Inicializar la estructura del registro de series
     const initialSession: typeof workoutSessionLogs = {};
-    rExercises.forEach(ex => {
+    
+    for (const ex of rExercises) {
+      // Buscar el último log de este ejercicio en IndexedDB
+      const logs = await db.workout_logs
+        .where('exercise_id')
+        .equals(ex.id)
+        .toArray();
+      
+      const activeLogs = logs.filter(l => l.deleted === 0);
+      
+      let defaultWeight = ex.weight;
+      let defaultReps = ex.reps;
+      
+      if (activeLogs.length > 0) {
+        // Ordenar por fecha descendente (más reciente primero)
+        activeLogs.sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime());
+        defaultWeight = activeLogs[0].weight_lifted;
+        defaultReps = activeLogs[0].reps_done;
+      }
+
       initialSession[ex.id] = Array.from({ length: ex.series }).map(() => ({
         seriesIndex: 0,
-        weight: ex.weight,
-        reps: ex.reps,
+        weight: defaultWeight,
+        reps: defaultReps,
         completed: false
       }));
-    });
+    }
     
     setWorkoutSessionLogs(initialSession);
     setView('workout');
@@ -749,18 +778,50 @@ function App() {
                         allCompleted ? 'border-emerald-500/30 bg-emerald-950/5' : 'border-slate-900'
                       }`}
                     >
-                      {/* Cabecera del ejercicio */}
+                       {/* Cabecera del ejercicio */}
                       <div className="px-4 py-3 flex items-center justify-between border-b border-slate-900/40">
                         <div>
                           <span className="text-[10px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
                             {ex.muscle_group}
                           </span>
                           <h4 className="font-bold text-white text-sm mt-1">{ex.name}</h4>
+                          {/* Sugerencia de la última sesión */}
+                          {series.length > 0 && (
+                            <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                              Sugerido (último): <span className="text-emerald-400 font-semibold">{series[0].weight} kg</span> × <span className="text-emerald-400 font-semibold">{series[0].reps} reps</span>
+                            </p>
+                          )}
                         </div>
                         {allCompleted && (
                           <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                         )}
                       </div>
+
+                      {/* Imagen o Ilustración de Referencia */}
+                      {(() => {
+                        const imgUrl = getExerciseImage(ex.name);
+                        return imgUrl ? (
+                          <div className="w-full h-32 overflow-hidden bg-slate-950 relative border-b border-slate-900/40 flex items-center justify-center">
+                            <img 
+                              src={imgUrl} 
+                              alt={ex.name} 
+                              className="w-full h-full object-cover opacity-80"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 to-transparent"></div>
+                          </div>
+                        ) : (
+                          // Placeholder estilizado con mancuerna
+                          <div className="w-full h-16 bg-slate-950/40 border-b border-slate-900/40 flex items-center gap-3 px-4 py-3">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shrink-0">
+                              <Dumbbell className="w-4 h-4 text-emerald-400" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Ilustración Genérica</p>
+                              <p className="text-xs text-slate-300">Mantén buena técnica y rango completo</p>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Lista de series */}
                       <div className="p-3 space-y-2">
