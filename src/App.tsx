@@ -314,28 +314,28 @@ function App() {
       name = 'Rutina de Empuje (Push)';
       description = 'Enfoque en pecho, hombros y tríceps.';
       exercisesTemplate = [
-        { name: 'Press de Banca Plano', muscle_group: 'Pecho', series: 4, reps: 10, weight: 60 },
-        { name: 'Press Militar con Barra', muscle_group: 'Hombros', series: 3, reps: 8, weight: 35 },
+        { name: 'Press de Banca Plano', muscle_group: 'Pecho', series: 4, reps: 10, weight: 135 },
+        { name: 'Press Militar con Barra', muscle_group: 'Hombros', series: 3, reps: 8, weight: 75 },
         { name: 'Fondos de Tríceps', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 0 },
-        { name: 'Aperturas con Mancuernas', muscle_group: 'Pecho', series: 3, reps: 12, weight: 14 }
+        { name: 'Aperturas con Mancuernas', muscle_group: 'Pecho', series: 3, reps: 12, weight: 30 }
       ];
     } else if (type === 'Pull') {
       name = 'Rutina de Tirón (Pull)';
       description = 'Enfoque en espalda, bíceps y deltoides posterior.';
       exercisesTemplate = [
         { name: 'Dominadas (o Polea Alta)', muscle_group: 'Espalda', series: 4, reps: 8, weight: 0 },
-        { name: 'Remo con Barra', muscle_group: 'Espalda', series: 3, reps: 10, weight: 50 },
-        { name: 'Curl de Bíceps con Barra', muscle_group: 'Bíceps', series: 3, reps: 10, weight: 25 },
-        { name: 'Pájaros con Mancuerna', muscle_group: 'Hombros', series: 3, reps: 15, weight: 8 }
+        { name: 'Remo con Barra', muscle_group: 'Espalda', series: 3, reps: 10, weight: 115 },
+        { name: 'Curl de Bíceps con Barra', muscle_group: 'Bíceps', series: 3, reps: 10, weight: 55 },
+        { name: 'Pájaros con Mancuerna', muscle_group: 'Hombros', series: 3, reps: 15, weight: 15 }
       ];
     } else if (type === 'Legs') {
       name = 'Rutina de Piernas (Legs)';
       description = 'Enfoque en cuádriceps, femorales y pantorrillas.';
       exercisesTemplate = [
-        { name: 'Sentadilla Trasera con Barra', muscle_group: 'Piernas', series: 4, reps: 8, weight: 80 },
-        { name: 'Peso Muerto Rumano', muscle_group: 'Piernas', series: 3, reps: 10, weight: 70 },
-        { name: 'Prensa de Piernas', muscle_group: 'Piernas', series: 3, reps: 12, weight: 120 },
-        { name: 'Elevación de Pantorrillas', muscle_group: 'Pantorrillas', series: 4, reps: 15, weight: 40 }
+        { name: 'Sentadilla Trasera con Barra', muscle_group: 'Piernas', series: 4, reps: 8, weight: 175 },
+        { name: 'Peso Muerto Rumano', muscle_group: 'Piernas', series: 3, reps: 10, weight: 155 },
+        { name: 'Prensa de Piernas', muscle_group: 'Piernas', series: 3, reps: 12, weight: 265 },
+        { name: 'Elevación de Pantorrillas', muscle_group: 'Pantorrillas', series: 4, reps: 15, weight: 90 }
       ];
     } else if (type === 'PechoTriceps') {
       name = 'Pecho y tríceps';
@@ -352,9 +352,9 @@ function App() {
       name = 'Cuerpo Completo (Full Body)';
       description = 'Rutina general para todo el cuerpo.';
       exercisesTemplate = [
-        { name: 'Sentadillas', muscle_group: 'Piernas', series: 3, reps: 10, weight: 60 },
-        { name: 'Press de Banca', muscle_group: 'Pecho', series: 3, reps: 10, weight: 50 },
-        { name: 'Remo con Mancuerna', muscle_group: 'Espalda', series: 3, reps: 10, weight: 20 },
+        { name: 'Sentadillas', muscle_group: 'Piernas', series: 3, reps: 10, weight: 135 },
+        { name: 'Press de Banca', muscle_group: 'Pecho', series: 3, reps: 10, weight: 115 },
+        { name: 'Remo con Mancuerna', muscle_group: 'Espalda', series: 3, reps: 10, weight: 45 },
         { name: 'Plancha Abdominal', muscle_group: 'Abdomen', series: 3, reps: 60, weight: 0 }
       ];
     }
@@ -1116,7 +1116,7 @@ function App() {
                           />
                         </div>
                         <div>
-                          <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (kg)</label>
+                          <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (lb)</label>
                           <input
                             type="number"
                             step="0.5"
@@ -1197,7 +1197,7 @@ function App() {
                           {/* Sugerencia de la última sesión */}
                           {series.length > 0 && (
                             <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                              Sugerido (último): <span className="text-emerald-400 font-semibold">{series[0].weight} kg</span> × <span className="text-emerald-400 font-semibold">{series[0].reps} reps</span>
+                              Sugerido (último): <span className="text-emerald-400 font-semibold">{series[0].weight} lb</span> × <span className="text-emerald-400 font-semibold">{series[0].reps} reps</span>
                             </p>
                           )}
                         </div>
@@ -1269,7 +1269,7 @@ function App() {
                       <div className="p-3 space-y-2">
                         <div className="grid grid-cols-12 text-[10px] font-bold text-slate-500 uppercase px-2 mb-1">
                           <span className="col-span-2">Serie</span>
-                          <span className="col-span-4 text-center">Peso (kg)</span>
+                          <span className="col-span-4 text-center">Peso (lb)</span>
                           <span className="col-span-4 text-center">Reps</span>
                           <span className="col-span-2 text-right">Completado</span>
                         </div>
@@ -1381,7 +1381,7 @@ function App() {
                               </div>
                               <div className="flex items-center gap-3">
                                 <span className="text-slate-400 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-900/60">
-                                  {log.weight_lifted} kg
+                                  {log.weight_lifted} lb
                                 </span>
                                 <span className="text-slate-500 font-medium">
                                   {log.reps_done} reps
@@ -1480,7 +1480,8 @@ function App() {
               if (!latestMetric || !userHeight || userHeight <= 0) return null;
               
               const heightMeters = userHeight / 100;
-              const bmi = latestMetric.weight / (heightMeters * heightMeters);
+              const weightKg = latestMetric.weight * 0.45359237;
+              const bmi = weightKg / (heightMeters * heightMeters);
               
               let classification = '';
               let bmiColor = '';
@@ -1550,7 +1551,7 @@ function App() {
               
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (kg)</label>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (lb)</label>
                   <input
                     type="number"
                     step="0.1"
@@ -1651,7 +1652,7 @@ function App() {
                           {/* Tooltip on last weight */}
                           {idx === points.length - 1 && (
                             <text x={p.x} y={p.y - 8} fill="#10b981" fontSize="8" fontWeight="bold" textAnchor="middle">
-                              {p.weight} kg
+                              {p.weight} lb
                             </text>
                           )}
                         </g>
@@ -1676,7 +1677,7 @@ function App() {
                         <div className="space-y-1">
                           <p className="text-[10px] text-slate-450 font-semibold">{new Date(m.logged_at).toLocaleDateString()}</p>
                           <div className="flex gap-4 text-xs font-bold text-white">
-                            <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
+                            <span>Peso: <span className="text-emerald-400">{m.weight} lb</span></span>
                             {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
                             {m.muscle_mass > 0 && <span>Músculo: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
                           </div>
