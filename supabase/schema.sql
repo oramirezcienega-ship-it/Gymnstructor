@@ -5,6 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY, -- Se sincroniza con el ID de Supabase Auth
     email TEXT UNIQUE NOT NULL,
+    name TEXT,
     height NUMERIC DEFAULT 0.0,
     gender TEXT,
     birth_date DATE,

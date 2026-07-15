@@ -5,6 +5,7 @@ import type { Table } from 'dexie';
 export interface LocalProfile {
   id: string;
   email: string;
+  name?: string; // Nombre del usuario para comunicación personalizada
   height: number;
   gender: string;
   birth_date: string;

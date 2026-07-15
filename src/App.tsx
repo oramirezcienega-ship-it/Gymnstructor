@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db/db';
 import type { LocalRoutine, LocalExercise, LocalWorkoutLog } from './db/db';
-import { useSync, GUEST_USER_ID } from './hooks/useSync';
+import { useSync } from './hooks/useSync';
+import { supabase } from './supabaseClient';
 import {
   Dumbbell,
   Plus,
@@ -23,7 +24,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   AlertCircle,
-  Fingerprint,
   Lock,
   Scale,
   User
@@ -41,15 +41,55 @@ const getExerciseImage = (name: string): string | null => {
 };
 
 function App() {
-  const { isOnline, isSyncing, pendingCount, syncError, triggerSync } = useSync();
+  // Estados para Autenticación
+  const [user, setUser] = useState<any>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [emailInput, setEmailInput] = useState<string>('');
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [nameInput, setNameInput] = useState<string>('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const currentUserId = user?.id || '';
+
+  const { isOnline, isSyncing, pendingCount, syncError, triggerSync } = useSync(
+    currentUserId || null,
+    user?.email || null,
+    user?.user_metadata?.name || null
+  );
   const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress'>('dashboard');
 
   // Reactividad local mediante Dexie
-  const routines = useLiveQuery(() => db.routines.where('deleted').equals(0).toArray());
+  const routines = useLiveQuery(
+    () => {
+      if (!currentUserId) return [];
+      return db.routines.where('user_id').equals(currentUserId).and(r => r.deleted === 0).toArray();
+    },
+    [currentUserId]
+  );
   const exercises = useLiveQuery(() => db.exercises.where('deleted').equals(0).toArray());
   const workoutLogs = useLiveQuery(() => db.workout_logs.where('deleted').equals(0).sortBy('logged_at'));
-  const profile = useLiveQuery(() => db.profiles.get(GUEST_USER_ID));
-  const bodyMetrics = useLiveQuery(() => db.body_metrics.where('deleted').equals(0).sortBy('logged_at'));
+  const profile = useLiveQuery(
+    () => {
+      if (!currentUserId) return undefined;
+      return db.profiles.get(currentUserId);
+    },
+    [currentUserId]
+  );
+  const bodyMetrics = useLiveQuery(
+    () => {
+      if (!currentUserId) return [];
+      return db.body_metrics.where('user_id').equals(currentUserId).and(m => m.deleted === 0).toArray();
+    },
+    [currentUserId]
+  );
+
+  const userRoutines = routines || [];
+  const userRoutineIds = userRoutines.map(r => r.id);
+  const userExercises = exercises?.filter(ex => userRoutineIds.includes(ex.routine_id)) || [];
+  const userExerciseIds = userExercises.map(ex => ex.id);
+  const userWorkoutLogs = workoutLogs?.filter(log => userExerciseIds.includes(log.exercise_id)) || [];
 
   // Estados para CRUD de Rutinas
   const [activeRoutine, setActiveRoutine] = useState<LocalRoutine | null>(null);
@@ -66,15 +106,6 @@ function App() {
   // Estado para expandir la imagen del ejercicio
   const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
 
-  // Estados para Autenticación y Bloqueo
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isPinSetup, setIsPinSetup] = useState<boolean>(() => !!localStorage.getItem('user_pin'));
-  const [pinInput, setPinInput] = useState<string>('');
-  const [pinConfirm, setPinConfirm] = useState<string>('');
-  const [rememberMe, setRememberMe] = useState<boolean>(() => localStorage.getItem('remember_login') === 'true');
-  const [isScanningBiometric, setIsScanningBiometric] = useState<boolean>(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-
   // Estados para el registro de indicadores físicos en "Mi Progreso"
   const [weightInput, setWeightInput] = useState<string>('');
   const [fatInput, setFatInput] = useState<string>('');
@@ -86,6 +117,9 @@ function App() {
   const [userHeight, setUserHeight] = useState<number>(0);
   const [userGender, setUserGender] = useState<string>('');
   const [userBirthDate, setUserBirthDate] = useState<string>('');
+
+  // Estado para expandir/colapsar plantillas de ejercicios en el Dashboard
+  const [isTemplatesExpanded, setIsTemplatesExpanded] = useState<boolean>(false);
 
   // Helper para generar UUIDs locales (con fallback para contextos HTTP no seguros)
   const generateUUID = () => {
@@ -170,69 +204,159 @@ function App() {
     }
   }, [profile]);
 
-  // Intentar login biométrico automático al cargar la app si está marcado recordar sesión
+  // Escuchar estado de autenticación de Supabase
   useEffect(() => {
-    const hasPin = !!localStorage.getItem('user_pin');
-    setIsPinSetup(hasPin);
+    supabase.auth.getSession().then(({ data }: any) => {
+      const session = data?.session;
+      setUser(session?.user ?? null);
+      setIsAuthenticated(!!session);
+    });
 
-    const remember = localStorage.getItem('remember_login') === 'true';
-    if (remember && hasPin) {
-      handleBiometricLogin();
-    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
+      setUser(session?.user ?? null);
+      setIsAuthenticated(!!session);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Función para autenticación biométrica (con simulación premium interactiva)
-  const handleBiometricLogin = async () => {
-    setAuthError(null);
-    setIsScanningBiometric(true);
-    
-    // Simular escaneo de rostro/huella dactilar para una excelente UX
-    setTimeout(() => {
-      setIsScanningBiometric(false);
-      setIsAuthenticated(true);
-      localStorage.setItem('remember_login', rememberMe ? 'true' : 'false');
-    }, 1200);
-  };
-
-  // Autenticación tradicional mediante PIN
-  const handlePinLogin = () => {
-    const savedPin = localStorage.getItem('user_pin');
-    if (pinInput === savedPin) {
-      setIsAuthenticated(true);
-      localStorage.setItem('remember_login', rememberMe ? 'true' : 'false');
-      setPinInput('');
-      setAuthError(null);
-    } else {
-      setAuthError('PIN de acceso incorrecto. Inténtalo de nuevo.');
-      setPinInput('');
-    }
-  };
-
-  // Registro y configuración inicial de PIN
-  const handleSetupPin = () => {
-    if (pinInput.length < 4) {
-      setAuthError('El PIN debe tener al menos 4 números para ser seguro.');
+  const handleSignIn = async () => {
+    if (!emailInput.trim() || !passwordInput.trim()) {
+      setAuthError('Introduce tu correo y contraseña.');
       return;
     }
-    if (pinInput !== pinConfirm) {
-      setAuthError('Los PINs de confirmación no coinciden.');
+    setAuthError(null);
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailInput,
+        password: passwordInput
+      });
+      if (error) throw error;
+      
+      if (data.user) {
+        // Buscar el perfil en el servidor
+        const { data: serverProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
+
+        const now = new Date().toISOString();
+        const profileName = serverProfile?.name || data.user.user_metadata?.name || '';
+        
+        // Guardar/Actualizar localmente en IndexedDB
+        await db.profiles.put({
+          id: data.user.id,
+          email: data.user.email || '',
+          name: profileName,
+          height: serverProfile?.height || 0.0,
+          gender: serverProfile?.gender || '',
+          birth_date: serverProfile?.birth_date || '',
+          created_at: serverProfile?.created_at || now,
+          updated_at: serverProfile?.updated_at || now,
+          synced: 1
+        });
+
+        // Limpiar inputs
+        setEmailInput('');
+        setPasswordInput('');
+        setNameInput('');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(err.message || 'Error al iniciar sesión. Revisa tus credenciales.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSignUp = async () => {
+    if (!nameInput.trim() || !emailInput.trim() || !passwordInput.trim()) {
+      setAuthError('Por favor completa todos los campos.');
       return;
     }
-    localStorage.setItem('user_pin', pinInput);
-    setIsPinSetup(true);
-    setIsAuthenticated(true);
-    localStorage.setItem('remember_login', rememberMe ? 'true' : 'false');
-    setPinInput('');
-    setPinConfirm('');
+    if (passwordInput.length < 6) {
+      setAuthError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
     setAuthError(null);
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: emailInput,
+        password: passwordInput,
+        options: {
+          data: {
+            name: nameInput
+          }
+        }
+      });
+      if (error) throw error;
+      
+      if (data.user) {
+        const now = new Date().toISOString();
+        // Guardar perfil en Supabase
+        await supabase.from('profiles').insert({
+          id: data.user.id,
+          email: data.user.email,
+          name: nameInput,
+          height: 0.0,
+          gender: '',
+          birth_date: '',
+          created_at: now,
+          updated_at: now
+        });
+
+        // Guardar perfil local en IndexedDB
+        await db.profiles.put({
+          id: data.user.id,
+          email: data.user.email || '',
+          name: nameInput,
+          height: 0.0,
+          gender: '',
+          birth_date: '',
+          created_at: now,
+          updated_at: now,
+          synced: 1
+        });
+
+        alert('Registro exitoso. ¡Bienvenido!');
+        setEmailInput('');
+        setPasswordInput('');
+        setNameInput('');
+        setAuthMode('login');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(err.message || 'Error al registrarse.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (!confirm('¿Seguro que deseas cerrar la sesión?')) return;
+    setIsLoading(true);
+    try {
+      await supabase.auth.signOut();
+      setIsAuthenticated(false);
+      setUser(null);
+      setView('dashboard');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Guardar datos físicos generales del usuario
   const handleSavePhysicalProfile = async () => {
+    if (!currentUserId) return;
     setIsSavingProfile(true);
     const now = new Date().toISOString();
     try {
-      await db.profiles.update(GUEST_USER_ID, {
+      await db.profiles.update(currentUserId, {
         height: Number(userHeight) || 0,
         gender: userGender,
         birth_date: userBirthDate,
@@ -251,6 +375,7 @@ function App() {
 
   // Registrar una nueva medición histórica de peso / grasa / músculo
   const handleSaveBodyMetric = async () => {
+    if (!currentUserId) return;
     if (!weightInput || isNaN(Number(weightInput)) || Number(weightInput) <= 0) {
       alert('Introduce un valor de peso válido (en kg).');
       return;
@@ -262,7 +387,7 @@ function App() {
     try {
       await db.body_metrics.add({
         id: metricId,
-        user_id: GUEST_USER_ID,
+        user_id: currentUserId,
         weight: Number(weightInput),
         body_fat: Number(fatInput) || 0,
         muscle_mass: Number(muscleInput) || 0,
@@ -362,7 +487,7 @@ function App() {
     // Insertar en IndexedDB
     await db.routines.add({
       id: routineId,
-      user_id: GUEST_USER_ID,
+      user_id: currentUserId,
       name,
       description,
       deleted: 0,
@@ -449,7 +574,7 @@ function App() {
 
     const routineData: LocalRoutine = {
       id: routineId,
-      user_id: GUEST_USER_ID,
+      user_id: currentUserId,
       name: routineName,
       description: routineDescription,
       deleted: 0,
@@ -647,16 +772,15 @@ function App() {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100 selection:bg-emerald-500/30 font-sans">
         <div className="w-full max-w-sm glass-card rounded-3xl border border-slate-900 p-6 space-y-6 relative overflow-hidden">
-          {/* Biometric Scanning Overlay */}
-          {isScanningBiometric && (
+          
+          {isLoading && (
             <div className="absolute inset-0 bg-slate-950/95 z-50 flex flex-col items-center justify-center space-y-4 transition-all">
               <div className="w-20 h-20 rounded-full border border-emerald-500/20 flex items-center justify-center relative animate-pulse">
                 <div className="absolute inset-0 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin"></div>
-                <Fingerprint className="w-10 h-10 text-emerald-400" />
+                <Dumbbell className="w-10 h-10 text-emerald-400 animate-bounce" />
               </div>
               <div className="text-center">
-                <p className="text-sm font-bold text-white tracking-wide animate-pulse">Escaneando biométricos...</p>
-                <p className="text-[10px] text-slate-450 mt-1">Coloca tu huella o mira la cámara</p>
+                <p className="text-sm font-bold text-white tracking-wide animate-pulse">Cargando...</p>
               </div>
             </div>
           )}
@@ -669,107 +793,102 @@ function App() {
             <p className="text-xs text-slate-400">Tu compañero offline-first de gimnasio</p>
           </div>
 
-          {!isPinSetup ? (
-            // SETUP PIN SCREEN
+          {authMode === 'login' ? (
+            // PANTALLA DE INICIAR SESIÓN
             <div className="space-y-4">
               <div className="text-center">
-                <p className="text-sm font-bold text-white">Configura tu código de acceso</p>
-                <p className="text-[10px] text-slate-450 mt-1">Este PIN te servirá para bloquear tu app localmente</p>
+                <p className="text-sm font-bold text-white">Inicia sesión en tu cuenta</p>
+                <p className="text-[10px] text-slate-400 mt-1">Introduce tus credenciales para sincronizar tus rutinas</p>
               </div>
 
               <div className="space-y-3">
                 <input
-                  type="password"
-                  pattern="[0-9]*"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="Introduce PIN (Ej: 1234)"
-                  value={pinInput}
-                  onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-sm text-white font-bold tracking-widest focus:outline-none focus:border-emerald-500/50"
+                  type="email"
+                  placeholder="Correo electrónico"
+                  value={emailInput}
+                  onChange={e => setEmailInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                 />
                 <input
                   type="password"
-                  pattern="[0-9]*"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="Confirma tu PIN"
-                  value={pinConfirm}
-                  onChange={e => setPinConfirm(e.target.value.replace(/\D/g, ''))}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-sm text-white font-bold tracking-widest focus:outline-none focus:border-emerald-500/50"
+                  placeholder="Contraseña"
+                  value={passwordInput}
+                  onChange={e => setPasswordInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                 />
               </div>
 
               {authError && <p className="text-[11px] text-rose-400 text-center font-medium leading-tight">{authError}</p>}
 
               <button
-                onClick={handleSetupPin}
+                onClick={handleSignIn}
                 className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
               >
-                <Lock className="w-4 h-4" /> Registrar PIN & Entrar
+                <Lock className="w-4 h-4" /> Iniciar Sesión
               </button>
+
+              <div className="text-center pt-2">
+                <button
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setAuthError(null);
+                  }}
+                  className="text-xs text-emerald-400 hover:underline cursor-pointer"
+                >
+                  ¿No tienes una cuenta? Regístrate
+                </button>
+              </div>
             </div>
           ) : (
-            // LOGIN PIN SCREEN
+            // PANTALLA DE REGISTRO
             <div className="space-y-4">
               <div className="text-center">
-                <p className="text-sm font-bold text-white">Introduce tu PIN de acceso</p>
-                <p className="text-[10px] text-slate-450 mt-1">O utiliza la biometría para un acceso rápido</p>
+                <p className="text-sm font-bold text-white">Crea tu cuenta de Atleta</p>
+                <p className="text-[10px] text-slate-400 mt-1">Regístrate para mantener tu historial a salvo en la nube</p>
               </div>
 
               <div className="space-y-3">
                 <input
-                  type="password"
-                  pattern="[0-9]*"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="Código PIN"
-                  value={pinInput}
-                  onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center text-sm text-white font-bold tracking-widest focus:outline-none focus:border-emerald-500/50"
+                  type="text"
+                  placeholder="Tu Nombre"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                 />
-                
-                <div className="flex items-center justify-between px-1">
-                  <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={e => setRememberMe(e.target.checked)}
-                      className="rounded border-slate-800 text-emerald-500 focus:ring-emerald-500 bg-slate-900 w-3.5 h-3.5"
-                    />
-                    Recordar PIN
-                  </label>
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem('user_pin');
-                      localStorage.removeItem('remember_login');
-                      setIsPinSetup(false);
-                      setPinInput('');
-                      setPinConfirm('');
-                    }}
-                    className="text-[10px] text-slate-500 hover:text-rose-450 transition-colors"
-                  >
-                    Restablecer PIN
-                  </button>
-                </div>
+                <input
+                  type="email"
+                  placeholder="Correo electrónico"
+                  value={emailInput}
+                  onChange={e => setEmailInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                />
+                <input
+                  type="password"
+                  placeholder="Contraseña"
+                  value={passwordInput}
+                  onChange={e => setPasswordInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                />
               </div>
 
-              {authError && <p className="text-[11px] text-rose-400 text-center font-medium leading-tight">{authError}</p>}
+              {authError && <p className="text-[11px] text-rose-450 text-center font-medium leading-tight">{authError}</p>}
 
-              <div className="grid grid-cols-5 gap-2">
+              <button
+                onClick={handleSignUp}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+              >
+                <User className="w-4 h-4" /> Registrarse
+              </button>
+
+              <div className="text-center pt-2">
                 <button
-                  onClick={handlePinLogin}
-                  className="col-span-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className="text-xs text-emerald-400 hover:underline cursor-pointer"
                 >
-                  <Lock className="w-4 h-4" /> Iniciar Sesión
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBiometricLogin}
-                  className="col-span-1 bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-400 hover:text-emerald-400 rounded-xl flex items-center justify-center cursor-pointer transition-all"
-                  title="Ingreso biométrico"
-                >
-                  <Fingerprint className="w-5 h-5" />
+                  ¿Ya tienes cuenta? Inicia Sesión
                 </button>
               </div>
             </div>
@@ -823,6 +942,15 @@ function App() {
               </span>
             )}
           </button>
+
+          {/* Botón Cerrar Sesión */}
+          <button
+            onClick={handleSignOut}
+            className="flex items-center justify-center w-8 h-8 rounded-xl bg-slate-900 hover:bg-rose-950/30 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-500/20 transition-all cursor-pointer"
+            title="Cerrar Sesión"
+          >
+            <User className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
@@ -850,7 +978,7 @@ function App() {
                 <Dumbbell className="w-40 h-40" />
               </div>
               <h2 className="text-xl font-extrabold text-white mb-1 flex items-center gap-1.5">
-                <Sparkles className="w-5 h-5 text-emerald-400" /> ¡Entrena Hoy!
+                <Sparkles className="w-5 h-5 text-emerald-400" /> ¡Hola, {profile?.name || 'Atleta'}!
               </h2>
               <p className="text-slate-400 text-sm mb-4">
                 Elige una de tus rutinas o genera plantillas prediseñadas instantáneamente.
@@ -867,24 +995,33 @@ function App() {
 
             {/* Generador de Plantillas Rápidas */}
             <div className="space-y-2.5">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Generador de Plantillas</h3>
-              <div className="grid grid-cols-2 gap-2">
-                {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps'] as const).map(type => (
-                  <button
-                    key={type}
-                    onClick={() => generateTemplateRoutine(type)}
-                    className="glass-card hover:bg-slate-900/60 p-3 rounded-2xl text-left border border-slate-900 transition-all flex items-center justify-between cursor-pointer"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-white">
-                        {type === 'Fullbody' ? 'Full Body' : type === 'PechoTriceps' ? 'Pecho & Tríceps' : type}
-                      </p>
-                      <p className="text-[10px] text-slate-400">Autogenerar ejercicios</p>
-                    </div>
-                    <Sparkles className="w-4 h-4 text-emerald-400/80" />
-                  </button>
-                ))}
-              </div>
+              <button
+                onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
+                className="w-full flex items-center justify-between text-xs font-bold text-slate-450 uppercase tracking-widest px-1 py-1 hover:text-white transition-colors cursor-pointer"
+              >
+                <span>Generador de Plantillas</span>
+                {isTemplatesExpanded ? <ChevronUp className="w-4 h-4 text-slate-450" /> : <ChevronDown className="w-4 h-4 text-slate-450" />}
+              </button>
+              
+              {isTemplatesExpanded && (
+                <div className="grid grid-cols-2 gap-2">
+                  {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps'] as const).map(type => (
+                    <button
+                      key={type}
+                      onClick={() => generateTemplateRoutine(type)}
+                      className="glass-card hover:bg-slate-900/60 p-3 rounded-2xl text-left border border-slate-900 transition-all flex items-center justify-between cursor-pointer"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-white">
+                          {type === 'Fullbody' ? 'Full Body' : type === 'PechoTriceps' ? 'Pecho & Tríceps' : type}
+                        </p>
+                        <p className="text-[10px] text-slate-400">Autogenerar ejercicios</p>
+                      </div>
+                      <Sparkles className="w-4 h-4 text-emerald-400/80" />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Listado de Rutinas */}
@@ -1352,11 +1489,11 @@ function App() {
               </h2>
             </div>
 
-            {workoutLogs && workoutLogs.length > 0 ? (
+            {userWorkoutLogs && userWorkoutLogs.length > 0 ? (
               <div className="space-y-4">
                 {/* Agrupar logs por día */}
-                {Array.from(new Set(workoutLogs.map(log => new Date(log.logged_at).toLocaleDateString()))).reverse().map(dateString => {
-                  const dateLogs = workoutLogs.filter(log => new Date(log.logged_at).toLocaleDateString() === dateString);
+                {Array.from(new Set(userWorkoutLogs.map(log => new Date(log.logged_at).toLocaleDateString()))).reverse().map(dateString => {
+                  const dateLogs = userWorkoutLogs.filter(log => new Date(log.logged_at).toLocaleDateString() === dateString);
                   
                   return (
                     <div key={dateString} className="glass-card rounded-2xl p-4 border border-slate-900 space-y-3">
@@ -1415,12 +1552,12 @@ function App() {
               <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
                 <TrendingUp className="w-5 h-5 text-emerald-400" /> Mi Progreso Físico
               </h2>
-              {/* Botón Cerrar Sesión (para volver al lock screen) */}
+              {/* Botón Cerrar Sesión */}
               <button
-                onClick={() => setIsAuthenticated(false)}
-                className="text-[10px] text-slate-550 hover:text-rose-450 font-medium bg-slate-900 border border-slate-850 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                onClick={handleSignOut}
+                className="text-[10px] text-slate-400 hover:text-rose-400 font-medium bg-slate-900 border border-slate-800 hover:border-rose-500/20 px-2.5 py-1 rounded-lg transition-all cursor-pointer"
               >
-                Bloquear App
+                Cerrar Sesión
               </button>
             </div>
 

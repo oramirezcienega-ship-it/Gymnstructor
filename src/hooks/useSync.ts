@@ -2,23 +2,26 @@ import { useEffect, useState, useCallback } from 'react';
 import { db } from '../db/db';
 import { supabase } from '../supabaseClient';
 
-export const GUEST_USER_ID = '00000000-0000-0000-0000-000000000000';
-export const GUEST_USER_EMAIL = 'invitado@gyminstructor.local';
-
-export function useSync() {
+export function useSync(
+  currentUserId: string | null,
+  currentUserEmail: string | null,
+  currentUserName: string | null
+) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  // Inicializar perfil de invitado localmente
-  const ensureGuestProfile = useCallback(async () => {
-    const guest = await db.profiles.get(GUEST_USER_ID);
-    if (!guest) {
+  // Inicializar perfil del usuario localmente en IndexedDB
+  const ensureUserProfile = useCallback(async () => {
+    if (!currentUserId) return;
+    const profile = await db.profiles.get(currentUserId);
+    if (!profile) {
       const now = new Date().toISOString();
       await db.profiles.put({
-        id: GUEST_USER_ID,
-        email: GUEST_USER_EMAIL,
+        id: currentUserId,
+        email: currentUserEmail || '',
+        name: currentUserName || '',
         height: 0.0,
         gender: '',
         birth_date: '',
@@ -26,23 +29,51 @@ export function useSync() {
         updated_at: now,
         synced: 0,
       });
+    } else if (currentUserName && !profile.name) {
+      await db.profiles.update(currentUserId, { name: currentUserName });
     }
-  }, []);
+  }, [currentUserId, currentUserEmail, currentUserName]);
 
-  // Contar registros pendientes de sincronizar
+  // Contar registros del usuario actual pendientes de sincronizar
   const updatePendingCount = useCallback(async () => {
-    const pProfiles = await db.profiles.where('synced').equals(0).count();
-    const pRoutines = await db.routines.where('synced').equals(0).count();
-    const pExercises = await db.exercises.where('synced').equals(0).count();
-    const pLogs = await db.workout_logs.where('synced').equals(0).count();
-    const pMetrics = await db.body_metrics.where('synced').equals(0).count();
+    if (!currentUserId) {
+      setPendingCount(0);
+      return;
+    }
+    const pProfiles = await db.profiles.where('id').equals(currentUserId).and(p => p.synced === 0).count();
+    const pRoutines = await db.routines.where('user_id').equals(currentUserId).and(r => r.synced === 0).count();
+    
+    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
+    const routineIds = userRoutines.map(r => r.id);
+    
+    let pExercises = 0;
+    let pLogs = 0;
+    
+    if (routineIds.length > 0) {
+      pExercises = await db.exercises.where('synced').equals(0).and(ex => routineIds.includes(ex.routine_id)).count();
+      
+      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
+      const exerciseIds = userExercises.map(ex => ex.id);
+      if (exerciseIds.length > 0) {
+        pLogs = await db.workout_logs.where('synced').equals(0).and(log => exerciseIds.includes(log.exercise_id)).count();
+      }
+    }
+    
+    const pMetrics = await db.body_metrics.where('user_id').equals(currentUserId).and(m => m.synced === 0).count();
     setPendingCount(pProfiles + pRoutines + pExercises + pLogs + pMetrics);
-  }, []);
+  }, [currentUserId]);
 
-  // Subir cambios locales a Supabase
+  // Subir cambios locales del usuario actual a Supabase
   const pushLocalChanges = useCallback(async () => {
+    if (!currentUserId) return;
+
     // 1. Sincronizar perfiles
-    const unsyncedProfiles = await db.profiles.where('synced').equals(0).toArray();
+    const unsyncedProfiles = await db.profiles
+      .where('id')
+      .equals(currentUserId)
+      .and(p => p.synced === 0)
+      .toArray();
+
     for (const profile of unsyncedProfiles) {
       const { data: serverProfile } = await supabase
         .from('profiles')
@@ -57,6 +88,7 @@ export function useSync() {
           await supabase.from('profiles').upsert({
             id: profile.id,
             email: profile.email,
+            name: profile.name || '',
             height: profile.height,
             gender: profile.gender,
             birth_date: profile.birth_date,
@@ -69,6 +101,7 @@ export function useSync() {
         await supabase.from('profiles').insert({
           id: profile.id,
           email: profile.email,
+          name: profile.name || '',
           height: profile.height,
           gender: profile.gender,
           birth_date: profile.birth_date,
@@ -80,7 +113,12 @@ export function useSync() {
     }
 
     // 2. Sincronizar rutinas
-    const unsyncedRoutines = await db.routines.where('synced').equals(0).toArray();
+    const unsyncedRoutines = await db.routines
+      .where('user_id')
+      .equals(currentUserId)
+      .and(r => r.synced === 0)
+      .toArray();
+
     for (const routine of unsyncedRoutines) {
       const { data: serverRoutine } = await supabase
         .from('routines')
@@ -126,20 +164,50 @@ export function useSync() {
       }
     }
 
-    // 3. Sincronizar ejercicios
-    const unsyncedExercises = await db.exercises.where('synced').equals(0).toArray();
-    for (const exercise of unsyncedExercises) {
-      const { data: serverExercise } = await supabase
-        .from('exercises')
-        .select('*')
-        .eq('id', exercise.id)
-        .maybeSingle();
+    // Obtener rutinas de este usuario para sincronizar ejercicios y logs relacionados
+    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
+    const routineIds = userRoutines.map(r => r.id);
 
-      if (serverExercise) {
-        const localTime = new Date(exercise.updated_at).getTime();
-        const serverTime = new Date(serverExercise.updated_at).getTime();
-        if (localTime > serverTime) {
-          await supabase.from('exercises').upsert({
+    // 3. Sincronizar ejercicios
+    if (routineIds.length > 0) {
+      const unsyncedExercises = await db.exercises
+        .where('synced')
+        .equals(0)
+        .and(ex => routineIds.includes(ex.routine_id))
+        .toArray();
+
+      for (const exercise of unsyncedExercises) {
+        const { data: serverExercise } = await supabase
+          .from('exercises')
+          .select('*')
+          .eq('id', exercise.id)
+          .maybeSingle();
+
+        if (serverExercise) {
+          const localTime = new Date(exercise.updated_at).getTime();
+          const serverTime = new Date(serverExercise.updated_at).getTime();
+          if (localTime > serverTime) {
+            await supabase.from('exercises').upsert({
+              id: exercise.id,
+              routine_id: exercise.routine_id,
+              name: exercise.name,
+              muscle_group: exercise.muscle_group,
+              series: exercise.series,
+              reps: exercise.reps,
+              weight: exercise.weight,
+              deleted: exercise.deleted === 1,
+              updated_at: exercise.updated_at,
+              image_data: exercise.image_data,
+            });
+          } else {
+            await db.exercises.put({
+              ...serverExercise,
+              deleted: serverExercise.deleted ? 1 : 0,
+              synced: 1,
+            });
+          }
+        } else {
+          await supabase.from('exercises').insert({
             id: exercise.id,
             routine_id: exercise.routine_id,
             name: exercise.name,
@@ -148,90 +216,86 @@ export function useSync() {
             reps: exercise.reps,
             weight: exercise.weight,
             deleted: exercise.deleted === 1,
+            created_at: exercise.created_at,
             updated_at: exercise.updated_at,
             image_data: exercise.image_data,
           });
-        } else {
-          await db.exercises.put({
-            ...serverExercise,
-            deleted: serverExercise.deleted ? 1 : 0,
-            synced: 1,
-          });
         }
-      } else {
-        await supabase.from('exercises').insert({
-          id: exercise.id,
-          routine_id: exercise.routine_id,
-          name: exercise.name,
-          muscle_group: exercise.muscle_group,
-          series: exercise.series,
-          reps: exercise.reps,
-          weight: exercise.weight,
-          deleted: exercise.deleted === 1,
-          created_at: exercise.created_at,
-          updated_at: exercise.updated_at,
-          image_data: exercise.image_data,
-        });
-      }
 
-      if (exercise.deleted === 1) {
-        await db.exercises.delete(exercise.id);
-      } else {
-        await db.exercises.update(exercise.id, { synced: 1 });
-      }
-    }
-
-    // 4. Sincronizar registros de entrenamiento (Workout Logs)
-    const unsyncedLogs = await db.workout_logs.where('synced').equals(0).toArray();
-    for (const log of unsyncedLogs) {
-      const { data: serverLog } = await supabase
-        .from('workout_logs')
-        .select('*')
-        .eq('id', log.id)
-        .maybeSingle();
-
-      if (serverLog) {
-        const localTime = new Date(log.updated_at).getTime();
-        const serverTime = new Date(serverLog.updated_at).getTime();
-        if (localTime > serverTime) {
-          await supabase.from('workout_logs').upsert({
-            id: log.id,
-            exercise_id: log.exercise_id,
-            weight_lifted: log.weight_lifted,
-            reps_done: log.reps_done,
-            logged_at: log.logged_at,
-            deleted: log.deleted === 1,
-            updated_at: log.updated_at,
-          });
+        if (exercise.deleted === 1) {
+          await db.exercises.delete(exercise.id);
         } else {
-          await db.workout_logs.put({
-            ...serverLog,
-            deleted: serverLog.deleted ? 1 : 0,
-            synced: 1,
-          });
+          await db.exercises.update(exercise.id, { synced: 1 });
         }
-      } else {
-        await supabase.from('workout_logs').insert({
-          id: log.id,
-          exercise_id: log.exercise_id,
-          weight_lifted: log.weight_lifted,
-          reps_done: log.reps_done,
-          logged_at: log.logged_at,
-          deleted: log.deleted === 1,
-          created_at: log.created_at,
-          updated_at: log.updated_at,
-        });
       }
 
-      if (log.deleted === 1) {
-        await db.workout_logs.delete(log.id);
-      } else {
-        await db.workout_logs.update(log.id, { synced: 1 });
+      // 4. Sincronizar registros de entrenamiento (Workout Logs)
+      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
+      const exerciseIds = userExercises.map(ex => ex.id);
+
+      if (exerciseIds.length > 0) {
+        const unsyncedLogs = await db.workout_logs
+          .where('synced')
+          .equals(0)
+          .and(log => exerciseIds.includes(log.exercise_id))
+          .toArray();
+
+        for (const log of unsyncedLogs) {
+          const { data: serverLog } = await supabase
+            .from('workout_logs')
+            .select('*')
+            .eq('id', log.id)
+            .maybeSingle();
+
+          if (serverLog) {
+            const localTime = new Date(log.updated_at).getTime();
+            const serverTime = new Date(serverLog.updated_at).getTime();
+            if (localTime > serverTime) {
+              await supabase.from('workout_logs').upsert({
+                id: log.id,
+                exercise_id: log.exercise_id,
+                weight_lifted: log.weight_lifted,
+                reps_done: log.reps_done,
+                logged_at: log.logged_at,
+                deleted: log.deleted === 1,
+                updated_at: log.updated_at,
+              });
+            } else {
+              await db.workout_logs.put({
+                ...serverLog,
+                deleted: serverLog.deleted ? 1 : 0,
+                synced: 1,
+              });
+            }
+          } else {
+            await supabase.from('workout_logs').insert({
+              id: log.id,
+              exercise_id: log.exercise_id,
+              weight_lifted: log.weight_lifted,
+              reps_done: log.reps_done,
+              logged_at: log.logged_at,
+              deleted: log.deleted === 1,
+              created_at: log.created_at,
+              updated_at: log.updated_at,
+            });
+          }
+
+          if (log.deleted === 1) {
+            await db.workout_logs.delete(log.id);
+          } else {
+            await db.workout_logs.update(log.id, { synced: 1 });
+          }
+        }
       }
     }
 
     // 5. Sincronizar métricas corporales (Body Metrics)
-    const unsyncedMetrics = await db.body_metrics.where('synced').equals(0).toArray();
+    const unsyncedMetrics = await db.body_metrics
+      .where('user_id')
+      .equals(currentUserId)
+      .and(m => m.synced === 0)
+      .toArray();
+
     for (const metric of unsyncedMetrics) {
       const { data: serverMetric } = await supabase
         .from('body_metrics')
@@ -280,17 +344,21 @@ export function useSync() {
         await db.body_metrics.update(metric.id, { synced: 1 });
       }
     }
-  }, []);
+  }, [currentUserId]);
 
   // Descargar cambios desde el servidor
   const pullServerChanges = useCallback(async () => {
-    const lastSync = localStorage.getItem('last_sync_timestamp') || new Date(0).toISOString();
+    if (!currentUserId) return;
+
+    const lastSyncKey = `last_sync_timestamp_${currentUserId}`;
+    const lastSync = localStorage.getItem(lastSyncKey) || new Date(0).toISOString();
     const currentSyncTime = new Date().toISOString();
 
-    // 1. Descargar perfiles
+    // 1. Descargar perfiles (sólo del usuario actual)
     const { data: serverProfiles } = await supabase
       .from('profiles')
       .select('*')
+      .eq('id', currentUserId)
       .gt('updated_at', lastSync);
 
     if (serverProfiles) {
@@ -303,6 +371,7 @@ export function useSync() {
     const { data: serverRoutines } = await supabase
       .from('routines')
       .select('*')
+      .eq('user_id', currentUserId)
       .gt('updated_at', lastSync);
 
     if (serverRoutines) {
@@ -327,62 +396,75 @@ export function useSync() {
       }
     }
 
-    // 3. Descargar ejercicios
-    const { data: serverExercises } = await supabase
-      .from('exercises')
-      .select('*')
-      .gt('updated_at', lastSync);
+    // Obtener los IDs de rutinas de este usuario para descargar ejercicios y logs relacionados
+    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
+    const routineIds = userRoutines.map(r => r.id);
 
-    if (serverExercises) {
-      for (const sExercise of serverExercises) {
-        const local = await db.exercises.get(sExercise.id);
-        if (!local || local.synced === 1 || new Date(sExercise.updated_at).getTime() > new Date(local.updated_at).getTime()) {
-          if (sExercise.deleted) {
-            await db.exercises.delete(sExercise.id);
-          } else {
-            await db.exercises.put({
-              id: sExercise.id,
-              routine_id: sExercise.routine_id,
-              name: sExercise.name,
-              muscle_group: sExercise.muscle_group,
-              series: sExercise.series,
-              reps: sExercise.reps,
-              weight: Number(sExercise.weight),
-              deleted: 0,
-              created_at: sExercise.created_at,
-              updated_at: sExercise.updated_at,
-              synced: 1,
-              image_data: sExercise.image_data,
-            });
+    // 3. Descargar ejercicios relacionados con las rutinas del usuario
+    if (routineIds.length > 0) {
+      const { data: serverExercises } = await supabase
+        .from('exercises')
+        .select('*')
+        .in('routine_id', routineIds)
+        .gt('updated_at', lastSync);
+
+      if (serverExercises) {
+        for (const sExercise of serverExercises) {
+          const local = await db.exercises.get(sExercise.id);
+          if (!local || local.synced === 1 || new Date(sExercise.updated_at).getTime() > new Date(local.updated_at).getTime()) {
+            if (sExercise.deleted) {
+              await db.exercises.delete(sExercise.id);
+            } else {
+              await db.exercises.put({
+                id: sExercise.id,
+                routine_id: sExercise.routine_id,
+                name: sExercise.name,
+                muscle_group: sExercise.muscle_group,
+                series: sExercise.series,
+                reps: sExercise.reps,
+                weight: Number(sExercise.weight),
+                deleted: 0,
+                created_at: sExercise.created_at,
+                updated_at: sExercise.updated_at,
+                synced: 1,
+                image_data: sExercise.image_data,
+              });
+            }
           }
         }
       }
-    }
 
-    // 4. Descargar registros de entrenamiento
-    const { data: serverLogs } = await supabase
-      .from('workout_logs')
-      .select('*')
-      .gt('updated_at', lastSync);
+      // Descargar logs relacionados con los ejercicios del usuario
+      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
+      const exerciseIds = userExercises.map(ex => ex.id);
 
-    if (serverLogs) {
-      for (const sLog of serverLogs) {
-        const local = await db.workout_logs.get(sLog.id);
-        if (!local || local.synced === 1 || new Date(sLog.updated_at).getTime() > new Date(local.updated_at).getTime()) {
-          if (sLog.deleted) {
-            await db.workout_logs.delete(sLog.id);
-          } else {
-            await db.workout_logs.put({
-              id: sLog.id,
-              exercise_id: sLog.exercise_id,
-              weight_lifted: Number(sLog.weight_lifted),
-              reps_done: sLog.reps_done,
-              logged_at: sLog.logged_at,
-              deleted: 0,
-              created_at: sLog.created_at,
-              updated_at: sLog.updated_at,
-              synced: 1,
-            });
+      if (exerciseIds.length > 0) {
+        const { data: serverLogs } = await supabase
+          .from('workout_logs')
+          .select('*')
+          .in('exercise_id', exerciseIds)
+          .gt('updated_at', lastSync);
+
+        if (serverLogs) {
+          for (const sLog of serverLogs) {
+            const local = await db.workout_logs.get(sLog.id);
+            if (!local || local.synced === 1 || new Date(sLog.updated_at).getTime() > new Date(local.updated_at).getTime()) {
+              if (sLog.deleted) {
+                await db.workout_logs.delete(sLog.id);
+              } else {
+                await db.workout_logs.put({
+                  id: sLog.id,
+                  exercise_id: sLog.exercise_id,
+                  weight_lifted: Number(sLog.weight_lifted),
+                  reps_done: sLog.reps_done,
+                  logged_at: sLog.logged_at,
+                  deleted: 0,
+                  created_at: sLog.created_at,
+                  updated_at: sLog.updated_at,
+                  synced: 1,
+                });
+              }
+            }
           }
         }
       }
@@ -392,6 +474,7 @@ export function useSync() {
     const { data: serverMetrics } = await supabase
       .from('body_metrics')
       .select('*')
+      .eq('user_id', currentUserId)
       .gt('updated_at', lastSync);
 
     if (serverMetrics) {
@@ -418,16 +501,16 @@ export function useSync() {
       }
     }
 
-    localStorage.setItem('last_sync_timestamp', currentSyncTime);
-  }, []);
+    localStorage.setItem(lastSyncKey, currentSyncTime);
+  }, [currentUserId]);
 
   // Función principal de disparo de sincronización
   const triggerSync = useCallback(async () => {
-    if (!navigator.onLine || isSyncing) return;
+    if (!navigator.onLine || isSyncing || !currentUserId) return;
     setIsSyncing(true);
     setSyncError(null);
     try {
-      await ensureGuestProfile();
+      await ensureUserProfile();
       // 1. PUSH
       await pushLocalChanges();
       // 2. PULL
@@ -440,10 +523,12 @@ export function useSync() {
     } finally {
       setIsSyncing(false);
     }
-  }, [ensureGuestProfile, pushLocalChanges, pullServerChanges, updatePendingCount, isSyncing]);
+  }, [currentUserId, ensureUserProfile, pushLocalChanges, pullServerChanges, updatePendingCount, isSyncing]);
 
   // Manejo de eventos online/offline y conteo de carga inicial
   useEffect(() => {
+    if (!currentUserId) return;
+
     const handleOnline = () => {
       setIsOnline(true);
       triggerSync();
@@ -453,9 +538,8 @@ export function useSync() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    ensureGuestProfile().then(() => {
+    ensureUserProfile().then(() => {
       updatePendingCount();
-      // Sincronizar al iniciar si está online
       if (navigator.onLine) {
         triggerSync();
       }
@@ -465,7 +549,7 @@ export function useSync() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [currentUserId, ensureUserProfile, updatePendingCount, triggerSync]);
 
   return { isOnline, isSyncing, pendingCount, syncError, triggerSync, updatePendingCount };
 }
