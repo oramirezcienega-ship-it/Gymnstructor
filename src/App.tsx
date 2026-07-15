@@ -57,7 +57,7 @@ function App() {
   };
 
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
-  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody') => {
+  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps') => {
     const routineId = generateUUID();
     const now = new Date().toISOString();
 
@@ -91,6 +91,17 @@ function App() {
         { name: 'Peso Muerto Rumano', muscle_group: 'Piernas', series: 3, reps: 10, weight: 70 },
         { name: 'Prensa de Piernas', muscle_group: 'Piernas', series: 3, reps: 12, weight: 120 },
         { name: 'Elevación de Pantorrillas', muscle_group: 'Pantorrillas', series: 4, reps: 15, weight: 40 }
+      ];
+    } else if (type === 'PechoTriceps') {
+      name = 'Pecho y tríceps';
+      description = 'Rutina inicial enfocada en empuje horizontal y extensión de tríceps.';
+      exercisesTemplate = [
+        { name: 'Press banca en Smith', muscle_group: 'Pecho', series: 4, reps: 12, weight: 45 },
+        { name: 'Press inclinado mancuernas', muscle_group: 'Pecho', series: 3, reps: 12, weight: 40 },
+        { name: 'Cable crossover', muscle_group: 'Pecho', series: 3, reps: 15, weight: 22.5 },
+        { name: 'Jalón tríceps en polea', muscle_group: 'Tríceps', series: 3, reps: 15, weight: 52 },
+        { name: 'Fondos asistidos', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 70 },
+        { name: 'Jalón cuerda sobre cabeza', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 42.5 }
       ];
     } else {
       name = 'Cuerpo Completo (Full Body)';
@@ -456,14 +467,16 @@ function App() {
             <div className="space-y-2.5">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Generador de Plantillas</h3>
               <div className="grid grid-cols-2 gap-2">
-                {(['Push', 'Pull', 'Legs', 'Fullbody'] as const).map(type => (
+                {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps'] as const).map(type => (
                   <button
                     key={type}
                     onClick={() => generateTemplateRoutine(type)}
                     className="glass-card hover:bg-slate-900/60 p-3 rounded-2xl text-left border border-slate-900 transition-all flex items-center justify-between cursor-pointer"
                   >
                     <div>
-                      <p className="text-sm font-semibold text-white">{type === 'Fullbody' ? 'Full Body' : type}</p>
+                      <p className="text-sm font-semibold text-white">
+                        {type === 'Fullbody' ? 'Full Body' : type === 'PechoTriceps' ? 'Pecho & Tríceps' : type}
+                      </p>
                       <p className="text-[10px] text-slate-400">Autogenerar ejercicios</p>
                     </div>
                     <Sparkles className="w-4 h-4 text-emerald-400/80" />
