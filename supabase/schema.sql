@@ -79,3 +79,27 @@ CREATE TRIGGER update_exercises_updated_at BEFORE UPDATE ON public.exercises FOR
 CREATE TRIGGER update_workout_logs_updated_at BEFORE UPDATE ON public.workout_logs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_body_metrics_updated_at BEFORE UPDATE ON public.body_metrics FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+
+-- Tabla de rutinas compartidas en la comunidad
+CREATE TABLE IF NOT EXISTS public.community_routines (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    description TEXT,
+    creator_name TEXT NOT NULL DEFAULT 'Atleta',
+    creator_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Tabla de ejercicios de las rutinas comunitarias
+CREATE TABLE IF NOT EXISTS public.community_exercises (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    community_routine_id UUID REFERENCES public.community_routines(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    muscle_group TEXT NOT NULL,
+    series INTEGER NOT NULL DEFAULT 3,
+    reps INTEGER NOT NULL DEFAULT 10,
+    weight NUMERIC NOT NULL DEFAULT 0.0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+
