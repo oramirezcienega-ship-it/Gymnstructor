@@ -134,17 +134,23 @@ export function useSync(
       .toArray();
 
     for (const routine of unsyncedRoutines) {
-      const { data: serverRoutine } = await supabase
+      const { data: serverRoutine, error: getError } = await supabase
         .from('routines')
         .select('*')
         .eq('id', routine.id)
         .maybeSingle();
 
+      if (getError) {
+        console.error('Error fetching server routine:', getError);
+        continue;
+      }
+
+      let success = false;
       if (serverRoutine) {
         const localTime = new Date(routine.updated_at).getTime();
         const serverTime = new Date(serverRoutine.updated_at).getTime();
         if (localTime > serverTime) {
-          await supabase.from('routines').upsert({
+          const { error: upsertError } = await supabase.from('routines').upsert({
             id: routine.id,
             user_id: routine.user_id,
             name: routine.name,
@@ -152,15 +158,18 @@ export function useSync(
             deleted: routine.deleted === 1,
             updated_at: routine.updated_at,
           });
+          if (!upsertError) success = true;
+          else console.error('Error upserting routine:', upsertError);
         } else {
           await db.routines.put({
             ...serverRoutine,
             deleted: serverRoutine.deleted ? 1 : 0,
             synced: 1,
           });
+          success = true;
         }
       } else {
-        await supabase.from('routines').insert({
+        const { error: insertError } = await supabase.from('routines').insert({
           id: routine.id,
           user_id: routine.user_id,
           name: routine.name,
@@ -169,12 +178,16 @@ export function useSync(
           created_at: routine.created_at,
           updated_at: routine.updated_at,
         });
+        if (!insertError) success = true;
+        else console.error('Error inserting routine:', insertError);
       }
 
-      if (routine.deleted === 1) {
-        await db.routines.delete(routine.id);
-      } else {
-        await db.routines.update(routine.id, { synced: 1 });
+      if (success) {
+        if (routine.deleted === 1) {
+          await db.routines.delete(routine.id);
+        } else {
+          await db.routines.update(routine.id, { synced: 1 });
+        }
       }
     }
 
@@ -191,17 +204,23 @@ export function useSync(
         .toArray();
 
       for (const exercise of unsyncedExercises) {
-        const { data: serverExercise } = await supabase
+        const { data: serverExercise, error: getError } = await supabase
           .from('exercises')
           .select('*')
           .eq('id', exercise.id)
           .maybeSingle();
 
+        if (getError) {
+          console.error('Error fetching server exercise:', getError);
+          continue;
+        }
+
+        let success = false;
         if (serverExercise) {
           const localTime = new Date(exercise.updated_at).getTime();
           const serverTime = new Date(serverExercise.updated_at).getTime();
           if (localTime > serverTime) {
-            await supabase.from('exercises').upsert({
+            const { error: upsertError } = await supabase.from('exercises').upsert({
               id: exercise.id,
               routine_id: exercise.routine_id,
               name: exercise.name,
@@ -213,15 +232,18 @@ export function useSync(
               updated_at: exercise.updated_at,
               image_data: exercise.image_data,
             });
+            if (!upsertError) success = true;
+            else console.error('Error upserting exercise:', upsertError);
           } else {
             await db.exercises.put({
               ...serverExercise,
               deleted: serverExercise.deleted ? 1 : 0,
               synced: 1,
             });
+            success = true;
           }
         } else {
-          await supabase.from('exercises').insert({
+          const { error: insertError } = await supabase.from('exercises').insert({
             id: exercise.id,
             routine_id: exercise.routine_id,
             name: exercise.name,
@@ -234,12 +256,16 @@ export function useSync(
             updated_at: exercise.updated_at,
             image_data: exercise.image_data,
           });
+          if (!insertError) success = true;
+          else console.error('Error inserting exercise:', insertError);
         }
 
-        if (exercise.deleted === 1) {
-          await db.exercises.delete(exercise.id);
-        } else {
-          await db.exercises.update(exercise.id, { synced: 1 });
+        if (success) {
+          if (exercise.deleted === 1) {
+            await db.exercises.delete(exercise.id);
+          } else {
+            await db.exercises.update(exercise.id, { synced: 1 });
+          }
         }
       }
 
@@ -255,17 +281,23 @@ export function useSync(
           .toArray();
 
         for (const log of unsyncedLogs) {
-          const { data: serverLog } = await supabase
+          const { data: serverLog, error: getError } = await supabase
             .from('workout_logs')
             .select('*')
             .eq('id', log.id)
             .maybeSingle();
 
+          if (getError) {
+            console.error('Error fetching server workout log:', getError);
+            continue;
+          }
+
+          let success = false;
           if (serverLog) {
             const localTime = new Date(log.updated_at).getTime();
             const serverTime = new Date(serverLog.updated_at).getTime();
             if (localTime > serverTime) {
-              await supabase.from('workout_logs').upsert({
+              const { error: upsertError } = await supabase.from('workout_logs').upsert({
                 id: log.id,
                 exercise_id: log.exercise_id,
                 weight_lifted: log.weight_lifted,
@@ -274,15 +306,18 @@ export function useSync(
                 deleted: log.deleted === 1,
                 updated_at: log.updated_at,
               });
+              if (!upsertError) success = true;
+              else console.error('Error upserting workout log:', upsertError);
             } else {
               await db.workout_logs.put({
                 ...serverLog,
                 deleted: serverLog.deleted ? 1 : 0,
                 synced: 1,
               });
+              success = true;
             }
           } else {
-            await supabase.from('workout_logs').insert({
+            const { error: insertError } = await supabase.from('workout_logs').insert({
               id: log.id,
               exercise_id: log.exercise_id,
               weight_lifted: log.weight_lifted,
@@ -292,12 +327,16 @@ export function useSync(
               created_at: log.created_at,
               updated_at: log.updated_at,
             });
+            if (!insertError) success = true;
+            else console.error('Error inserting workout log:', insertError);
           }
 
-          if (log.deleted === 1) {
-            await db.workout_logs.delete(log.id);
-          } else {
-            await db.workout_logs.update(log.id, { synced: 1 });
+          if (success) {
+            if (log.deleted === 1) {
+              await db.workout_logs.delete(log.id);
+            } else {
+              await db.workout_logs.update(log.id, { synced: 1 });
+            }
           }
         }
       }
@@ -311,17 +350,23 @@ export function useSync(
       .toArray();
 
     for (const metric of unsyncedMetrics) {
-      const { data: serverMetric } = await supabase
+      const { data: serverMetric, error: getError } = await supabase
         .from('body_metrics')
         .select('*')
         .eq('id', metric.id)
         .maybeSingle();
 
+      if (getError) {
+        console.error('Error fetching server body metric:', getError);
+        continue;
+      }
+
+      let success = false;
       if (serverMetric) {
         const localTime = new Date(metric.updated_at).getTime();
         const serverTime = new Date(serverMetric.updated_at).getTime();
         if (localTime > serverTime) {
-          await supabase.from('body_metrics').upsert({
+          const { error: upsertError } = await supabase.from('body_metrics').upsert({
             id: metric.id,
             user_id: metric.user_id,
             weight: metric.weight,
@@ -334,15 +379,18 @@ export function useSync(
             deleted: metric.deleted === 1,
             updated_at: metric.updated_at,
           });
+          if (!upsertError) success = true;
+          else console.error('Error upserting body metric:', upsertError);
         } else {
           await db.body_metrics.put({
             ...serverMetric,
             deleted: serverMetric.deleted ? 1 : 0,
             synced: 1,
           });
+          success = true;
         }
       } else {
-        await supabase.from('body_metrics').insert({
+        const { error: insertError } = await supabase.from('body_metrics').insert({
           id: metric.id,
           user_id: metric.user_id,
           weight: metric.weight,
@@ -356,12 +404,16 @@ export function useSync(
           created_at: metric.created_at,
           updated_at: metric.updated_at,
         });
+        if (!insertError) success = true;
+        else console.error('Error inserting body metric:', insertError);
       }
 
-      if (metric.deleted === 1) {
-        await db.body_metrics.delete(metric.id);
-      } else {
-        await db.body_metrics.update(metric.id, { synced: 1 });
+      if (success) {
+        if (metric.deleted === 1) {
+          await db.body_metrics.delete(metric.id);
+        } else {
+          await db.body_metrics.update(metric.id, { synced: 1 });
+        }
       }
     }
   }, [currentUserId]);
@@ -532,12 +584,49 @@ export function useSync(
     localStorage.setItem(lastSyncKey, currentSyncTime);
   }, [currentUserId]);
 
+  // Forzar un reinicio de sincronización único para corregir fallos silenciosos previos
+  const forceResetSyncStatus = useCallback(async () => {
+    if (!currentUserId) return;
+    const key = `forced_resync_v2_${currentUserId}`;
+    if (localStorage.getItem(key)) return;
+
+    try {
+      // 1. Marcar todos los registros locales como no sincronizados para que se vuelvan a subir
+      await db.profiles.where('id').equals(currentUserId).modify({ synced: 0 });
+      await db.routines.where('user_id').equals(currentUserId).modify({ synced: 0 });
+      
+      const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
+      const routineIds = userRoutines.map(r => r.id);
+      if (routineIds.length > 0) {
+        await db.exercises.where('routine_id').anyOf(routineIds).modify({ synced: 0 });
+        
+        const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
+        const exerciseIds = userExercises.map(ex => ex.id);
+        if (exerciseIds.length > 0) {
+          await db.workout_logs.where('exercise_id').anyOf(exerciseIds).modify({ synced: 0 });
+        }
+      }
+      await db.body_metrics.where('user_id').equals(currentUserId).modify({ synced: 0 });
+
+      // 2. Limpiar la marca temporal del último pull para descargar todo el contenido del servidor
+      const lastSyncKey = `last_sync_timestamp_${currentUserId}`;
+      localStorage.removeItem(lastSyncKey);
+
+      // 3. Marcar como completado el reset para este usuario
+      localStorage.setItem(key, 'true');
+      console.log('Forced resync initialized successfully');
+    } catch (e) {
+      console.error('Error during forced resync initialization:', e);
+    }
+  }, [currentUserId]);
+
   // Función principal de disparo de sincronización
   const triggerSync = useCallback(async () => {
     if (!navigator.onLine || isSyncing || !currentUserId) return;
     setIsSyncing(true);
     setSyncError(null);
     try {
+      await forceResetSyncStatus();
       await ensureUserProfile();
       // 1. PUSH
       await pushLocalChanges();
@@ -551,7 +640,7 @@ export function useSync(
     } finally {
       setIsSyncing(false);
     }
-  }, [currentUserId, ensureUserProfile, pushLocalChanges, pullServerChanges, updatePendingCount, isSyncing]);
+  }, [currentUserId, forceResetSyncStatus, ensureUserProfile, pushLocalChanges, pullServerChanges, updatePendingCount, isSyncing]);
 
   // Manejo de eventos online/offline y conteo de carga inicial
   useEffect(() => {
