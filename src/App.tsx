@@ -44,12 +44,40 @@ function App() {
   // Estados para Autenticación
   const [user, setUser] = useState<any>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot_password'>('login');
   const [emailInput, setEmailInput] = useState<string>('');
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [nameInput, setNameInput] = useState<string>('');
   const [authError, setAuthError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  // Estados nuevos para Perfil y Recuperación de Contraseña
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+  const [newPasswordInput, setNewPasswordInput] = useState<string>('');
+  const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState<string>('');
+  const [isRecoveringPassword, setIsRecoveringPassword] = useState<boolean>(false);
+  const [passwordResetEmailSent, setPasswordResetEmailSent] = useState<boolean>(false);
+  const [isSavingPassword, setIsSavingPassword] = useState<boolean>(false);
+  const [passwordChangeError, setPasswordChangeError] = useState<string | null>(null);
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState<boolean>(false);
+
+  // Inputs del perfil de usuario en el modal
+  const [profileNameInput, setProfileNameInput] = useState<string>('');
+  const [profileBirthDateInput, setProfileBirthDateInput] = useState<string>('');
+
+  // Función para calcular la edad dinámicamente
+  const calculateAge = (birthDateStr: string): number | null => {
+    if (!birthDateStr) return null;
+    const birthDate = new Date(birthDateStr);
+    if (isNaN(birthDate.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age;
+  };
 
   const currentUserId = user?.id || '';
 
@@ -204,6 +232,19 @@ function App() {
     }
   }, [profile]);
 
+  // Inicializar inputs del modal de perfil cuando se abre
+  useEffect(() => {
+    if (showProfileModal && profile) {
+      setProfileNameInput(profile.name || '');
+      setProfileBirthDateInput(profile.birth_date || '');
+      // Reiniciar estados del formulario de cambio de contraseña
+      setNewPasswordInput('');
+      setConfirmNewPasswordInput('');
+      setPasswordChangeError(null);
+      setPasswordChangeSuccess(false);
+    }
+  }, [showProfileModal, profile]);
+
   // Escuchar estado de autenticación de Supabase
   useEffect(() => {
     supabase.auth.getSession().then(({ data }: any) => {
@@ -212,9 +253,13 @@ function App() {
       setIsAuthenticated(!!session);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event: any, session: any) => {
       setUser(session?.user ?? null);
       setIsAuthenticated(!!session);
+      
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecoveringPassword(true);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -357,11 +402,106 @@ function App() {
       setIsAuthenticated(false);
       setUser(null);
       setView('dashboard');
+      setShowProfileModal(false);
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!emailInput.trim()) {
+      setAuthError('Por favor introduce tu correo electrónico.');
+      return;
+    }
+    setAuthError(null);
+    setIsLoading(true);
+    setPasswordResetEmailSent(false);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(emailInput.trim(), {
+        redirectTo: window.location.origin
+      });
+      if (error) throw error;
+      setPasswordResetEmailSent(true);
+    } catch (err: any) {
+      console.error(err);
+      setAuthError(getErrorMessage(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdatePassword = async (isRecoveryFlow: boolean) => {
+    if (!newPasswordInput || !confirmNewPasswordInput) {
+      const errMsg = 'Introduce y confirma tu nueva contraseña.';
+      if (isRecoveryFlow) setAuthError(errMsg);
+      else setPasswordChangeError(errMsg);
+      return;
+    }
+    if (newPasswordInput.length < 6) {
+      const errMsg = 'La contraseña debe tener al menos 6 caracteres.';
+      if (isRecoveryFlow) setAuthError(errMsg);
+      else setPasswordChangeError(errMsg);
+      return;
+    }
+    if (newPasswordInput !== confirmNewPasswordInput) {
+      const errMsg = 'Las contraseñas no coinciden.';
+      if (isRecoveryFlow) setAuthError(errMsg);
+      else setPasswordChangeError(errMsg);
+      return;
+    }
+
+    if (isRecoveryFlow) setAuthError(null);
+    else setPasswordChangeError(null);
+
+    setIsSavingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPasswordInput
+      });
+      if (error) throw error;
+      
+      if (isRecoveryFlow) {
+        alert('Contraseña restablecida con éxito. Ya puedes iniciar sesión con tu nueva contraseña.');
+        setIsRecoveringPassword(false);
+        setAuthMode('login');
+        setEmailInput('');
+      } else {
+        setPasswordChangeSuccess(true);
+      }
+      setNewPasswordInput('');
+      setConfirmNewPasswordInput('');
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = getErrorMessage(err);
+      if (isRecoveryFlow) setAuthError(errMsg);
+      else setPasswordChangeError(errMsg);
+    } finally {
+      setIsSavingPassword(false);
+    }
+  };
+
+  const handleSaveUserProfile = async () => {
+    if (!currentUserId) return;
+    setIsSavingProfile(true);
+    const now = new Date().toISOString();
+    try {
+      await db.profiles.update(currentUserId, {
+        name: profileNameInput.trim(),
+        birth_date: profileBirthDateInput,
+        updated_at: now,
+        synced: 0
+      });
+      alert('Perfil actualizado con éxito.');
+      setShowProfileModal(false);
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar el perfil.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+    if (isOnline) triggerSync();
   };
 
   // Guardar datos físicos generales del usuario
@@ -782,6 +922,80 @@ function App() {
     }
   };
 
+  if (isRecoveringPassword) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100 selection:bg-emerald-500/30 font-sans">
+        <div className="w-full max-w-sm glass-card rounded-3xl border border-slate-900 p-6 space-y-6 relative overflow-hidden">
+          {isLoading && (
+            <div className="absolute inset-0 bg-slate-950/95 z-50 flex flex-col items-center justify-center space-y-4 transition-all">
+              <div className="w-20 h-20 rounded-full border border-emerald-500/20 flex items-center justify-center relative animate-pulse">
+                <div className="absolute inset-0 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin"></div>
+                <Dumbbell className="w-10 h-10 text-emerald-400 animate-bounce" />
+              </div>
+              <div className="text-center">
+                <p className="text-sm font-bold text-white tracking-wide animate-pulse">Procesando...</p>
+              </div>
+            </div>
+          )}
+
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/5">
+              <Dumbbell className="w-6 h-6 text-emerald-400" />
+            </div>
+            <h1 className="text-xl font-black text-white tracking-tight leading-none">Gym Instructor</h1>
+            <p className="text-xs text-slate-400">Restablecer tu contraseña</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="text-center">
+              <p className="text-sm font-bold text-white">Elige tu nueva contraseña</p>
+              <p className="text-[10px] text-slate-400 mt-1">Escribe tu nueva contraseña de al menos 6 caracteres</p>
+            </div>
+
+            <div className="space-y-3">
+              <input
+                type="password"
+                placeholder="Nueva contraseña"
+                value={newPasswordInput}
+                onChange={e => setNewPasswordInput(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+              />
+              <input
+                type="password"
+                placeholder="Confirmar nueva contraseña"
+                value={confirmNewPasswordInput}
+                onChange={e => setConfirmNewPasswordInput(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+              />
+            </div>
+
+            {authError && <p className="text-[11px] text-rose-400 text-center font-medium leading-tight">{authError}</p>}
+
+            <button
+              onClick={() => handleUpdatePassword(true)}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+            >
+              Restablecer Contraseña
+            </button>
+
+            <div className="text-center pt-2">
+              <button
+                onClick={() => {
+                  setIsRecoveringPassword(false);
+                  setAuthMode('login');
+                  setAuthError(null);
+                }}
+                className="text-xs text-slate-400 hover:underline cursor-pointer"
+              >
+                Volver al inicio
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100 selection:bg-emerald-500/30 font-sans">
@@ -841,7 +1055,7 @@ function App() {
                 <Lock className="w-4 h-4" /> Iniciar Sesión
               </button>
 
-              <div className="text-center pt-2">
+              <div className="text-center pt-2 flex flex-col gap-2">
                 <button
                   onClick={() => {
                     setAuthMode('signup');
@@ -850,6 +1064,61 @@ function App() {
                   className="text-xs text-emerald-400 hover:underline cursor-pointer"
                 >
                   ¿No tienes una cuenta? Regístrate
+                </button>
+                <button
+                  onClick={() => {
+                    setAuthMode('forgot_password');
+                    setAuthError(null);
+                    setPasswordResetEmailSent(false);
+                  }}
+                  className="text-[11px] text-slate-400 hover:text-slate-350 hover:underline cursor-pointer"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+              </div>
+            </div>
+          ) : authMode === 'forgot_password' ? (
+            // PANTALLA DE OLVIDÉ MI CONTRASEÑA
+            <div className="space-y-4">
+              <div className="text-center">
+                <p className="text-sm font-bold text-white">Recuperar Contraseña</p>
+                <p className="text-[10px] text-slate-400 mt-1">Te enviaremos un enlace a tu correo para restablecerla</p>
+              </div>
+
+              <div className="space-y-3">
+                <input
+                  type="email"
+                  placeholder="Correo electrónico"
+                  value={emailInput}
+                  onChange={e => setEmailInput(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                />
+              </div>
+
+              {passwordResetEmailSent && (
+                <div className="p-3 bg-emerald-950/30 border border-emerald-500/20 rounded-xl text-center text-emerald-400 text-[11px] font-medium leading-tight">
+                  ¡Enlace enviado! Revisa la bandeja de entrada de tu correo electrónico.
+                </div>
+              )}
+
+              {authError && <p className="text-[11px] text-rose-450 text-center font-medium leading-tight">{authError}</p>}
+
+              <button
+                onClick={handleForgotPassword}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+              >
+                Enviar enlace de recuperación
+              </button>
+
+              <div className="text-center pt-2">
+                <button
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                  }}
+                  className="text-xs text-emerald-400 hover:underline cursor-pointer"
+                >
+                  Volver a Iniciar Sesión
                 </button>
               </div>
             </div>
@@ -957,13 +1226,18 @@ function App() {
             )}
           </button>
 
-          {/* Botón Cerrar Sesión */}
+          {/* Avatar estilo Netflix */}
           <button
-            onClick={handleSignOut}
-            className="flex items-center justify-center w-8 h-8 rounded-xl bg-slate-900 hover:bg-rose-950/30 text-slate-400 hover:text-rose-400 border border-slate-800 hover:border-rose-500/20 transition-all cursor-pointer"
-            title="Cerrar Sesión"
+            onClick={() => setShowProfileModal(true)}
+            className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 hover:scale-105 transition-all shadow-md shadow-emerald-500/10 cursor-pointer overflow-hidden relative group border border-emerald-500/20"
+            title="Ver Perfil"
           >
-            <User className="w-4 h-4" />
+            {/* Ojos y sonrisa estilo Netflix */}
+            <svg viewBox="0 0 32 32" className="w-6 h-6 fill-slate-950 opacity-90">
+              <circle cx="10" cy="11" r="2.5" />
+              <circle cx="22" cy="11" r="2.5" />
+              <path d="M 6 18 C 6 18, 9 24, 16 24 C 23 24, 26 18, 26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+            </svg>
           </button>
         </div>
       </header>
@@ -1890,6 +2164,138 @@ function App() {
             <span className="text-[10px] font-bold">Historial</span>
           </button>
         </nav>
+      )}
+
+      {/* MODAL DE PERFIL ESTILO NETFLIX */}
+      {showProfileModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden space-y-6 max-h-[90vh] overflow-y-auto">
+            {/* Header del Modal */}
+            <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+              <h3 className="text-base font-bold text-white">Perfil de Atleta</h3>
+              <button
+                onClick={() => setShowProfileModal(false)}
+                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Netflix Avatar y Datos Generales */}
+            <div className="flex flex-col items-center text-center space-y-3">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-emerald-600 to-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/10 relative overflow-hidden">
+                <svg viewBox="0 0 32 32" className="w-14 h-14 fill-slate-950 opacity-95">
+                  <circle cx="10" cy="11" r="2.5" />
+                  <circle cx="22" cy="11" r="2.5" />
+                  <path d="M 6 18 C 6 18, 9 24, 16 24 C 23 24, 26 18, 26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+                </svg>
+              </div>
+              <div>
+                <h4 className="text-lg font-black text-white">{profile?.name || 'Atleta'}</h4>
+                <p className="text-xs text-slate-450 font-medium">{user?.email}</p>
+                {profile?.birth_date ? (
+                  <p className="text-xs text-emerald-400 font-bold mt-1">
+                    {calculateAge(profile.birth_date)} años
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-500 font-semibold mt-1">
+                    Edad sin definir (añade tu nacimiento)
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Inputs de Edición de Perfil */}
+            <div className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Nombre del Atleta</label>
+                <input
+                  type="text"
+                  placeholder="Tu Nombre"
+                  value={profileNameInput}
+                  onChange={e => setProfileNameInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fecha de Nacimiento</label>
+                <input
+                  type="date"
+                  value={profileBirthDateInput}
+                  onChange={e => setProfileBirthDateInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                />
+                {profileBirthDateInput && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Edad calculada: {calculateAge(profileBirthDateInput) ?? 'Desconocida'} años
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={handleSaveUserProfile}
+                disabled={isSavingProfile}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
+              >
+                <Save className="w-4 h-4" /> Guardar Cambios
+              </button>
+            </div>
+
+            {/* Sección Cambiar Contraseña */}
+            <div className="border-t border-slate-800 pt-4 space-y-3">
+              <h4 className="text-xs font-bold text-slate-450 uppercase tracking-widest px-1">Seguridad</h4>
+              
+              <div className="space-y-3 bg-slate-950/40 p-4 rounded-2xl border border-slate-850">
+                <p className="text-[10px] text-slate-400 leading-normal">
+                  Puedes cambiar tu contraseña de acceso a continuación (mínimo 6 caracteres).
+                </p>
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    placeholder="Nueva contraseña"
+                    value={newPasswordInput}
+                    onChange={e => setNewPasswordInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Confirmar nueva contraseña"
+                    value={confirmNewPasswordInput}
+                    onChange={e => setConfirmNewPasswordInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-850 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                  />
+                </div>
+
+                {passwordChangeError && (
+                  <p className="text-[10px] text-rose-455 text-center font-medium leading-tight">{passwordChangeError}</p>
+                )}
+
+                {passwordChangeSuccess && (
+                  <p className="text-[10px] text-emerald-400 text-center font-semibold leading-tight">¡Contraseña actualizada con éxito!</p>
+                )}
+
+                <button
+                  onClick={() => handleUpdatePassword(false)}
+                  disabled={isSavingPassword}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 hover:border-emerald-500/30 text-xs font-semibold py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Lock className="w-3.5 h-3.5" /> Actualizar Contraseña
+                </button>
+              </div>
+            </div>
+
+            {/* Botón de Cerrar Sesión */}
+            <div className="border-t border-slate-800 pt-4">
+              <button
+                onClick={handleSignOut}
+                className="w-full bg-rose-500/10 hover:bg-rose-550/20 text-rose-400 border border-rose-500/20 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                Cerrar Sesión
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
