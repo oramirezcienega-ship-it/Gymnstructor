@@ -58,6 +58,9 @@ export interface LocalBodyMetric {
   weight: number;
   body_fat: number;
   muscle_mass: number;
+  bmr?: number; // Metabolismo basal (kcal)
+  visceral_fat?: number; // Grasa visceral
+  body_age?: number; // Edad corporal
   logged_at: string;
   deleted: number; // 0 = false, 1 = true
   created_at: string;

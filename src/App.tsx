@@ -154,6 +154,9 @@ function App() {
   const [weightInput, setWeightInput] = useState<string>('');
   const [fatInput, setFatInput] = useState<string>('');
   const [muscleInput, setMuscleInput] = useState<string>('');
+  const [bmrInput, setBmrInput] = useState<string>('');
+  const [visceralFatInput, setVisceralFatInput] = useState<string>('');
+  const [bodyAgeInput, setBodyAgeInput] = useState<string>('');
   const [metricDate, setMetricDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
   
@@ -689,6 +692,9 @@ function App() {
         weight: Number(weightInput),
         body_fat: Number(fatInput) || 0,
         muscle_mass: Number(muscleInput) || 0,
+        bmr: Number(bmrInput) || undefined,
+        visceral_fat: Number(visceralFatInput) || undefined,
+        body_age: Number(bodyAgeInput) || undefined,
         logged_at: new Date(metricDate).toISOString(),
         deleted: 0,
         created_at: now,
@@ -699,6 +705,9 @@ function App() {
       setWeightInput('');
       setFatInput('');
       setMuscleInput('');
+      setBmrInput('');
+      setVisceralFatInput('');
+      setBodyAgeInput('');
       alert('Medición registrada con éxito.');
     } catch (err) {
       console.error(err);
@@ -2151,13 +2160,43 @@ function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Músculo (Opc.)</label>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Mús. Esq. (Opc.)</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 42.1"
                     value={muscleInput}
                     onChange={e => setMuscleInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Metab. Basal (kcal)</label>
+                  <input
+                    type="number"
+                    placeholder="Ej: 1650"
+                    value={bmrInput}
+                    onChange={e => setBmrInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Grasa Visceral</label>
+                  <input
+                    type="number"
+                    placeholder="Ej: 5"
+                    value={visceralFatInput}
+                    onChange={e => setVisceralFatInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Edad Corporal</label>
+                  <input
+                    type="number"
+                    placeholder="Ej: 28"
+                    value={bodyAgeInput}
+                    onChange={e => setBodyAgeInput(e.target.value)}
                     className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
                   />
                 </div>
@@ -2254,10 +2293,16 @@ function App() {
                       <div key={m.id} className="glass-card rounded-xl p-3 border border-slate-900 flex justify-between items-center">
                         <div className="space-y-1">
                           <p className="text-[10px] text-slate-455 font-semibold">{formatDate(m.logged_at)}</p>
-                          <div className="flex gap-4 text-xs font-bold text-white">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-white mt-1">
                             <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
+                            {userHeight > 0 && (
+                              <span>IMC: <span className="text-emerald-400">{(m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}</span></span>
+                            )}
                             {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
-                            {m.muscle_mass > 0 && <span>Músculo: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
+                            {m.muscle_mass > 0 && <span>Mús. Esq: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
+                            {m.bmr && m.bmr > 0 && <span>Metab. Basal: <span className="text-emerald-400">{m.bmr} kcal</span></span>}
+                            {m.visceral_fat && m.visceral_fat > 0 && <span>Grasa Visceral: <span className="text-emerald-400">{m.visceral_fat}</span></span>}
+                            {m.body_age && m.body_age > 0 && <span>Edad Corporal: <span className="text-emerald-400">{m.body_age} años</span></span>}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
