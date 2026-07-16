@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from './db/db';
 import type { LocalRoutine, LocalExercise, LocalWorkoutLog } from './db/db';
@@ -79,6 +79,22 @@ function App() {
     return age;
   };
 
+  // Función para formatear fechas a DD/MM/YYYY
+  const formatDate = (dateValue: string | Date | undefined | null): string => {
+    if (!dateValue) return '';
+    const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
+    if (isNaN(date.getTime())) return '';
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  // Estados para la comunidad
+  const [communityRoutines, setCommunityRoutines] = useState<any[]>([]);
+  const [communityExercises, setCommunityExercises] = useState<any[]>([]);
+  const [isLoadingCommunity, setIsLoadingCommunity] = useState<boolean>(false);
+
   const currentUserId = user?.id || '';
 
   const { isOnline, isSyncing, pendingCount, syncError, triggerSync } = useSync(
@@ -86,7 +102,7 @@ function App() {
     user?.email || null,
     user?.user_metadata?.name || null
   );
-  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress' | 'community'>('dashboard');
 
   // Reactividad local mediante Dexie
   const routines = useLiveQuery(
@@ -264,6 +280,39 @@ function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Cargar rutinas de la comunidad
+  const loadCommunityData = useCallback(async () => {
+    if (!isOnline) return;
+    setIsLoadingCommunity(true);
+    try {
+      const { data: routinesData, error: routinesError } = await supabase
+        .from('community_routines')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (routinesError) throw routinesError;
+
+      const { data: exercisesData, error: exercisesError } = await supabase
+        .from('community_exercises')
+        .select('*');
+
+      if (exercisesError) throw exercisesError;
+
+      setCommunityRoutines(routinesData || []);
+      setCommunityExercises(exercisesData || []);
+    } catch (err) {
+      console.error('Error loading community data:', err);
+    } finally {
+      setIsLoadingCommunity(false);
+    }
+  }, [isOnline]);
+
+  useEffect(() => {
+    if (view === 'community') {
+      loadCommunityData();
+    }
+  }, [view, loadCommunityData]);
 
   const getErrorMessage = (err: any): string => {
     if (!err) return 'Error desconocido';
@@ -502,6 +551,101 @@ function App() {
       setIsSavingProfile(false);
     }
     if (isOnline) triggerSync();
+  };
+
+  const handleShareRoutine = async (routine: LocalRoutine) => {
+    if (!isOnline) {
+      alert('Debes estar online para compartir una rutina.');
+      return;
+    }
+    if (!confirm('¿Deseas compartir esta rutina y sus ejercicios públicamente con la comunidad?')) return;
+    
+    setIsLoading(true);
+    try {
+      const localExs = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+      
+      const { data: sharedRoutine, error: routineError } = await supabase
+        .from('community_routines')
+        .insert({
+          name: routine.name,
+          description: routine.description,
+          creator_name: profile?.name || 'Atleta',
+          creator_id: currentUserId
+        })
+        .select()
+        .single();
+        
+      if (routineError) throw routineError;
+      
+      if (localExs.length > 0 && sharedRoutine) {
+        const exsToInsert = localExs.map(ex => ({
+          community_routine_id: sharedRoutine.id,
+          name: ex.name,
+          muscle_group: ex.muscle_group,
+          series: ex.series,
+          reps: ex.reps,
+          weight: ex.weight
+        }));
+        
+        const { error: exsError } = await supabase
+          .from('community_exercises')
+          .insert(exsToInsert);
+          
+        if (exsError) throw exsError;
+      }
+      
+      alert('¡Rutina compartida con éxito con la comunidad!');
+      if (view === 'community') loadCommunityData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Error al compartir rutina: ' + getErrorMessage(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleImportCommunityRoutine = async (cRoutine: any, cExs: any[]) => {
+    const now = new Date().toISOString();
+    const newRoutineId = generateUUID();
+    
+    setIsLoading(true);
+    try {
+      await db.routines.add({
+        id: newRoutineId,
+        user_id: currentUserId,
+        name: `${cRoutine.name} (Comunidad)`,
+        description: cRoutine.description || `Rutina compartida por ${cRoutine.creator_name}.`,
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      });
+      
+      for (const ex of cExs) {
+        await db.exercises.add({
+          id: generateUUID(),
+          routine_id: newRoutineId,
+          name: ex.name,
+          muscle_group: ex.muscle_group,
+          series: ex.series,
+          reps: ex.reps,
+          weight: ex.weight,
+          deleted: 0,
+          created_at: now,
+          updated_at: now,
+          synced: 0
+        });
+      }
+      
+      alert('Rutina importada con éxito. Ya la puedes ver y usar en tu Dashboard.');
+      setView('dashboard');
+      if (isOnline) triggerSync();
+    } catch (err) {
+      console.error(err);
+      alert('Error al importar la rutina.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Guardar datos físicos generales del usuario
@@ -942,7 +1086,7 @@ function App() {
             <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/5">
               <Dumbbell className="w-6 h-6 text-emerald-400" />
             </div>
-            <h1 className="text-xl font-black text-white tracking-tight leading-none">Gym Instructor</h1>
+            <h1 className="text-xl font-black text-white tracking-tight leading-none">Gymstructor</h1>
             <p className="text-xs text-slate-400">Restablecer tu contraseña</p>
           </div>
 
@@ -1017,7 +1161,7 @@ function App() {
             <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/5">
               <Dumbbell className="w-6 h-6 text-emerald-400" />
             </div>
-            <h1 className="text-xl font-black text-white tracking-tight leading-none">Gym Instructor</h1>
+            <h1 className="text-xl font-black text-white tracking-tight leading-none">Gymstructor</h1>
             <p className="text-xs text-slate-400">Tu compañero offline-first de gimnasio</p>
           </div>
 
@@ -1190,7 +1334,7 @@ function App() {
             <Dumbbell className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-tight text-white m-0 leading-none">Gym Instructor</h1>
+            <h1 className="text-lg font-bold tracking-tight text-white m-0 leading-none">Gymstructor</h1>
             <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Offline-First App</span>
           </div>
         </div>
@@ -1361,22 +1505,31 @@ function App() {
                         </div>
 
                         {/* Botones de acción */}
-                        <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-900/80">
+                        <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-slate-900/80 flex-wrap">
                           <button
                             onClick={() => handleStartWorkout(routine)}
-                            className="flex-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                            className="flex-1 min-w-[70px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 py-2 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
                           >
                             <Play className="w-3.5 h-3.5 fill-current" /> Iniciar
                           </button>
                           <button
                             onClick={() => handleOpenEditRoutine(routine)}
-                            className="bg-slate-900 hover:bg-slate-800 text-slate-300 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 cursor-pointer"
+                            className="bg-slate-900 hover:bg-slate-800 text-slate-300 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 cursor-pointer"
                           >
                             <Edit className="w-3.5 h-3.5" /> Editar
                           </button>
+                          {isOnline && (
+                            <button
+                              onClick={() => handleShareRoutine(routine)}
+                              className="bg-slate-900 hover:bg-emerald-950/30 text-slate-300 hover:text-emerald-400 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-emerald-500/20 cursor-pointer"
+                              title="Compartir en la comunidad"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" /> Compartir
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDeleteRoutine(routine.id)}
-                            className="bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center transition-all border border-slate-800 hover:border-rose-500/20 cursor-pointer"
+                            className="bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center transition-all border border-slate-800 hover:border-rose-500/20 cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1780,8 +1933,8 @@ function App() {
             {userWorkoutLogs && userWorkoutLogs.length > 0 ? (
               <div className="space-y-4">
                 {/* Agrupar logs por día */}
-                {Array.from(new Set(userWorkoutLogs.map(log => new Date(log.logged_at).toLocaleDateString()))).reverse().map(dateString => {
-                  const dateLogs = userWorkoutLogs.filter(log => new Date(log.logged_at).toLocaleDateString() === dateString);
+                {Array.from(new Set(userWorkoutLogs.map(log => formatDate(log.logged_at)))).reverse().map(dateString => {
+                  const dateLogs = userWorkoutLogs.filter(log => formatDate(log.logged_at) === dateString);
                   
                   return (
                     <div key={dateString} className="glass-card rounded-2xl p-4 border border-slate-900 space-y-3">
@@ -1905,7 +2058,7 @@ function App() {
               if (!latestMetric || !userHeight || userHeight <= 0) return null;
               
               const heightMeters = userHeight / 100;
-              const weightKg = latestMetric.weight * 0.45359237;
+              const weightKg = latestMetric.weight;
               const bmi = weightKg / (heightMeters * heightMeters);
               
               let classification = '';
@@ -1976,7 +2129,7 @@ function App() {
               
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (lb)</label>
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (kg)</label>
                   <input
                     type="number"
                     step="0.1"
@@ -2077,7 +2230,7 @@ function App() {
                           {/* Tooltip on last weight */}
                           {idx === points.length - 1 && (
                             <text x={p.x} y={p.y - 8} fill="#10b981" fontSize="8" fontWeight="bold" textAnchor="middle">
-                              {p.weight} lb
+                              {p.weight} kg
                             </text>
                           )}
                         </g>
@@ -2100,9 +2253,9 @@ function App() {
                     .map(m => (
                       <div key={m.id} className="glass-card rounded-xl p-3 border border-slate-900 flex justify-between items-center">
                         <div className="space-y-1">
-                          <p className="text-[10px] text-slate-450 font-semibold">{new Date(m.logged_at).toLocaleDateString()}</p>
+                          <p className="text-[10px] text-slate-455 font-semibold">{formatDate(m.logged_at)}</p>
                           <div className="flex gap-4 text-xs font-bold text-white">
-                            <span>Peso: <span className="text-emerald-400">{m.weight} lb</span></span>
+                            <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
                             {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
                             {m.muscle_mass > 0 && <span>Músculo: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
                           </div>
@@ -2129,10 +2282,98 @@ function App() {
             </div>
           </div>
         )}
+        {/* 6. VISTA DE COMUNIDAD */}
+        {view === 'community' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
+                <Sparkles className="w-5 h-5 text-emerald-400" /> Rutinas de la Comunidad
+              </h2>
+            </div>
+            
+            <p className="text-xs text-slate-400 leading-normal">
+              Aquí puedes ver las rutinas compartidas por otros atletas e importarlas directamente a tus rutinas personales.
+            </p>
+
+            {isOnline ? (
+              <div className="space-y-4">
+                {isLoadingCommunity ? (
+                  <div className="text-center py-8">
+                    <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin mx-auto mb-2" />
+                    <p className="text-xs text-slate-400">Cargando rutinas de la comunidad...</p>
+                  </div>
+                ) : communityRoutines.length > 0 ? (
+                  <div className="space-y-4">
+                    {communityRoutines.map(cRoutine => {
+                      const cExs = communityExercises.filter(ex => ex.community_routine_id === cRoutine.id);
+                      return (
+                        <div key={cRoutine.id} className="glass-card rounded-2xl p-4 border border-slate-900 flex flex-col justify-between space-y-3">
+                          <div>
+                            <div className="flex justify-between items-start">
+                              <h4 className="font-bold text-white text-base leading-snug">{cRoutine.name}</h4>
+                              <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded-full font-semibold">
+                                Compartido por: {cRoutine.creator_name}
+                              </span>
+                            </div>
+                            <p className="text-slate-400 text-xs mt-1">{cRoutine.description || 'Sin descripción.'}</p>
+                            <p className="text-[9px] text-slate-500 mt-0.5">Fecha: {formatDate(cRoutine.created_at)}</p>
+                          </div>
+
+                          {/* Ejercicios */}
+                          <div className="text-xs text-slate-400 bg-slate-950/40 p-2.5 rounded-xl border border-slate-900/60 space-y-1.5">
+                            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Ejercicios ({cExs.length})</p>
+                            {cExs.length > 0 ? (
+                              <div className="grid grid-cols-1 gap-1">
+                                {cExs.map(ex => (
+                                  <div key={ex.id} className="flex justify-between text-[11px]">
+                                    <span className="font-medium text-slate-300">
+                                      {ex.name} ({ex.muscle_group})
+                                    </span>
+                                    <span className="text-slate-450 font-semibold">
+                                      {ex.series}×{ex.reps} — {ex.weight} lb
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-slate-550">Sin ejercicios agregados.</p>
+                            )}
+                          </div>
+
+                          {/* Botón Importar */}
+                          <button
+                            onClick={() => handleImportCommunityRoutine(cRoutine, cExs)}
+                            className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/5 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Agregar a mis rutinas
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="glass-card rounded-2xl p-8 border border-slate-900 text-center">
+                    <Sparkles className="w-10 h-10 text-slate-650 mx-auto mb-3" />
+                    <p className="text-sm text-slate-400">Aún no hay rutinas compartidas en la comunidad.</p>
+                    <p className="text-xs text-slate-500 mt-1">¡Sé el primero en compartir una rutina desde el menú de tus rutinas!</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="glass-card rounded-3xl p-8 border border-slate-900 text-center space-y-3">
+                <CloudOff className="w-10 h-10 text-rose-500 mx-auto animate-pulse" />
+                <p className="text-sm text-slate-400 font-semibold">Sin conexión a internet</p>
+                <p className="text-xs text-slate-500 leading-normal max-w-xs mx-auto">
+                  Necesitas estar conectado a internet para explorar y descargar rutinas de la comunidad.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {/* BOTTOM NAVIGATION BAR (Persistente en vistas principales) */}
-      {(view === 'dashboard' || view === 'progress' || view === 'history') && (
+      {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
         <nav className="fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30">
           <button
             onClick={() => setView('dashboard')}
@@ -2152,6 +2393,16 @@ function App() {
           >
             <TrendingUp className="w-5 h-5" />
             <span className="text-[10px] font-bold">Progreso</span>
+          </button>
+
+          <button
+            onClick={() => setView('community')}
+            className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
+              view === 'community' ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Sparkles className="w-5 h-5" />
+            <span className="text-[10px] font-bold">Comunidad</span>
           </button>
 
           <button

@@ -12,8 +12,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'Gym Instructor',
-        short_name: 'GymInstructor',
+        name: 'Gymstructor',
+        short_name: 'Gymstructor',
         description: 'Gestiona y genera tus rutinas de gimnasio de forma offline-first',
         theme_color: '#020617',
         background_color: '#020617',
