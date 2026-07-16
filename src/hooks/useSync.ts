@@ -75,17 +75,23 @@ export function useSync(
       .toArray();
 
     for (const profile of unsyncedProfiles) {
-      const { data: serverProfile } = await supabase
+      const { data: serverProfile, error: getError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', profile.id)
         .maybeSingle();
 
+      if (getError) {
+        console.error('Error fetching server profile:', getError);
+        continue;
+      }
+
+      let success = false;
       if (serverProfile) {
         const localTime = new Date(profile.updated_at).getTime();
         const serverTime = new Date(serverProfile.updated_at).getTime();
         if (localTime > serverTime) {
-          await supabase.from('profiles').upsert({
+          const { error: upsertError } = await supabase.from('profiles').upsert({
             id: profile.id,
             email: profile.email,
             name: profile.name || '',
@@ -94,11 +100,14 @@ export function useSync(
             birth_date: profile.birth_date,
             updated_at: profile.updated_at,
           });
+          if (!upsertError) success = true;
+          else console.error('Error upserting profile:', upsertError);
         } else {
           await db.profiles.put({ ...serverProfile, synced: 1 });
+          success = true;
         }
       } else {
-        await supabase.from('profiles').insert({
+        const { error: insertError } = await supabase.from('profiles').insert({
           id: profile.id,
           email: profile.email,
           name: profile.name || '',
@@ -108,8 +117,13 @@ export function useSync(
           created_at: profile.created_at,
           updated_at: profile.updated_at,
         });
+        if (!insertError) success = true;
+        else console.error('Error inserting profile:', insertError);
       }
-      await db.profiles.update(profile.id, { synced: 1 });
+
+      if (success) {
+        await db.profiles.update(profile.id, { synced: 1 });
+      }
     }
 
     // 2. Sincronizar rutinas
@@ -361,15 +375,20 @@ export function useSync(
     const currentSyncTime = new Date().toISOString();
 
     // 1. Descargar perfiles (sólo del usuario actual)
-    const { data: serverProfiles } = await supabase
+    const { data: serverProfiles, error: pullError } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', currentUserId)
       .gt('updated_at', lastSync);
 
-    if (serverProfiles) {
+    if (pullError) {
+      console.error('Error pulling server profiles:', pullError);
+    } else if (serverProfiles) {
       for (const sProfile of serverProfiles) {
-        await db.profiles.put({ ...sProfile, synced: 1 });
+        const local = await db.profiles.get(sProfile.id);
+        if (!local || local.synced === 1 || new Date(sProfile.updated_at).getTime() > new Date(local.updated_at).getTime()) {
+          await db.profiles.put({ ...sProfile, synced: 1 });
+        }
       }
     }
 
