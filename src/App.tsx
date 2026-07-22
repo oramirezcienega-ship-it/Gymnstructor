@@ -1007,7 +1007,7 @@ function App() {
     setWorkoutSessionLogs(copy);
   };
 
-  const handleWorkoutValueChange = (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: number) => {
+  const handleWorkoutValueChange = (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
     const copy = { ...workoutSessionLogs };
     copy[exerciseId][seriesIndex][field] = value;
     setWorkoutSessionLogs(copy);
@@ -1686,8 +1686,11 @@ function App() {
                             type="number"
                             min="1"
                             max="10"
-                            value={ex.series || 3}
-                            onChange={e => handleExerciseChange(index, 'series', parseInt(e.target.value) || 1)}
+                            value={ex.series !== undefined ? ex.series : ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handleExerciseChange(index, 'series', val === '' ? '' : (parseInt(val) || 1));
+                            }}
                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] text-center text-white focus:outline-none focus:border-emerald-500/50"
                           />
                         </div>
@@ -1697,8 +1700,11 @@ function App() {
                             type="number"
                             min="1"
                             max="100"
-                            value={ex.reps || 10}
-                            onChange={e => handleExerciseChange(index, 'reps', parseInt(e.target.value) || 1)}
+                            value={ex.reps !== undefined ? ex.reps : ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handleExerciseChange(index, 'reps', val === '' ? '' : (parseInt(val) || 1));
+                            }}
                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] text-center text-white focus:outline-none focus:border-emerald-500/50"
                           />
                         </div>
@@ -1707,8 +1713,11 @@ function App() {
                           <input
                             type="number"
                             step="0.5"
-                            value={ex.weight || 0}
-                            onChange={e => handleExerciseChange(index, 'weight', parseFloat(e.target.value) || 0)}
+                            value={ex.weight !== undefined ? ex.weight : ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handleExerciseChange(index, 'weight', val === '' ? '' : (parseFloat(val) || 0));
+                            }}
                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] text-center text-white focus:outline-none focus:border-emerald-500/50"
                           />
                         </div>
@@ -1878,8 +1887,11 @@ function App() {
                                 type="number"
                                 step="0.5"
                                 disabled={s.completed}
-                                value={s.weight}
-                                onChange={e => handleWorkoutValueChange(ex.id, idx, 'weight', parseFloat(e.target.value) || 0)}
+                                value={s.weight !== undefined ? s.weight : ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  handleWorkoutValueChange(ex.id, idx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
+                                }}
                                 className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
                               />
                             </div>
@@ -1887,8 +1899,11 @@ function App() {
                               <input
                                 type="number"
                                 disabled={s.completed}
-                                value={s.reps}
-                                onChange={e => handleWorkoutValueChange(ex.id, idx, 'reps', parseInt(e.target.value) || 0)}
+                                value={s.reps !== undefined ? s.reps : ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  handleWorkoutValueChange(ex.id, idx, 'reps', val === '' ? '' : (parseInt(val) || 0));
+                                }}
                                 className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
                               />
                             </div>
