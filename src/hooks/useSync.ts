@@ -99,7 +99,7 @@ export function useSync(
             name: profile.name || '',
             height: profile.height,
             gender: profile.gender,
-            birth_date: profile.birth_date,
+            birth_date: profile.birth_date || null,
             updated_at: profile.updated_at,
           });
           if (!upsertError) success = true;
@@ -118,7 +118,7 @@ export function useSync(
           name: profile.name || '',
           height: profile.height,
           gender: profile.gender,
-          birth_date: profile.birth_date,
+          birth_date: profile.birth_date || null,
           created_at: profile.created_at,
           updated_at: profile.updated_at,
         });
