@@ -1056,13 +1056,26 @@ function App() {
     setWorkoutSessionLogs(copy);
   };
 
+  const handlePropagateSeriesValue = (exerciseId: string, fromSeriesIndex: number, field: 'weight' | 'reps', value: number) => {
+    const copy = { ...workoutSessionLogs };
+    const list = copy[exerciseId];
+    if (!list) return;
+
+    for (let i = fromSeriesIndex + 1; i < list.length; i++) {
+      if (!list[i].completed) {
+        list[i][field] = value;
+      }
+    }
+    setWorkoutSessionLogs(copy);
+  };
+
   const handleFinishWorkout = async () => {
     if (!workoutRoutine) return;
     const now = new Date().toISOString();
 
     let logsAdded = 0;
 
-    // Registrar logs de series completadas y actualizar peso de ejercicio
+    // Registrar logs de series completadas y actualizar peso de ejercicio para siguientes sesiones
     for (const exerciseId of Object.keys(workoutSessionLogs)) {
       const seriesList = workoutSessionLogs[exerciseId];
       let maxWeightUsed = 0;
@@ -1093,11 +1106,19 @@ function App() {
         }
       }
 
-      // Progresar la carga: Actualizar peso/reps por defecto para el ejercicio
-      if (completedSeries.length > 0) {
+      // Progresar la carga: Guardar peso/reps por defecto actualizado para las siguientes sesiones
+      let weightToSave = maxWeightUsed;
+      let repsToSave = targetReps;
+
+      if (weightToSave <= 0 && seriesList.length > 0) {
+        weightToSave = seriesList[seriesList.length - 1].weight || seriesList[0].weight;
+        repsToSave = seriesList[seriesList.length - 1].reps || seriesList[0].reps;
+      }
+
+      if (weightToSave > 0) {
         await db.exercises.update(exerciseId, {
-          weight: maxWeightUsed,
-          reps: targetReps,
+          weight: weightToSave,
+          reps: repsToSave,
           series: targetSeries,
           updated_at: now,
           synced: 0
@@ -1841,6 +1862,25 @@ function App() {
                           )}
                         </div>
                         <div className="flex items-center gap-1.5">
+                          {/* Botón para aplicar el peso a las siguientes series */}
+                          {series.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const firstWeight = series[0]?.weight;
+                                if (firstWeight !== undefined && firstWeight > 0) {
+                                  if (confirm(`¿Deseas aplicar ${firstWeight} a las siguientes series de "${ex.name}"?`)) {
+                                    handlePropagateSeriesValue(ex.id, 0, 'weight', firstWeight);
+                                  }
+                                }
+                              }}
+                              className="text-[9px] font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-all flex items-center gap-1 cursor-pointer mr-1"
+                              title="Copiar peso a las siguientes series"
+                            >
+                              <RefreshCw className="w-3 h-3" /> Aplicar a siguientes
+                            </button>
+                          )}
+
                           {/* Botones de Reordenamiento */}
                           <div className="flex items-center gap-1 mr-1">
                             <button
@@ -1935,7 +1975,18 @@ function App() {
                                   const val = e.target.value;
                                   handleWorkoutValueChange(ex.id, idx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
                                 }}
-                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                                onBlur={e => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val) && val > 0) {
+                                    const remaining = series.slice(idx + 1).filter(item => !item.completed);
+                                    if (remaining.length > 0 && remaining.some(item => item.weight !== val)) {
+                                      if (confirm(`¿Deseas aplicar ${val} a las siguientes ${remaining.length} series de "${ex.name}"?`)) {
+                                        handlePropagateSeriesValue(ex.id, idx, 'weight', val);
+                                      }
+                                    }
+                                  }
+                                }}
+                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
                               />
                             </div>
                             <div className="col-span-4 flex justify-center">
