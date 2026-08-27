@@ -660,7 +660,9 @@ export function useSync(
   const triggerSync = useCallback(async (force = false) => {
     if (!navigator.onLine || (!force && isSyncing) || !currentUserId) return;
     setIsSyncing(true);
-    setSyncError(null);
+    if (force) {
+      setSyncError(null);
+    }
     try {
       await forceResetSyncStatus();
       await ensureUserProfile();
@@ -670,9 +672,12 @@ export function useSync(
       await pullServerChanges();
       // 3. Actualizar conteo
       await updatePendingCount();
+      // Limpiar error si todo se completó correctamente
+      setSyncError(null);
     } catch (error: any) {
       console.error('Error durante la sincronización:', error);
-      setSyncError(error.message || 'Error desconocido de sincronización');
+      const errMsg = error?.message || String(error) || 'Error desconocido de sincronización';
+      setSyncError(errMsg);
     } finally {
       setIsSyncing(false);
     }
@@ -684,7 +689,7 @@ export function useSync(
 
     const handleOnline = () => {
       setIsOnline(true);
-      triggerSync();
+      triggerSync(true);
     };
     const handleOffline = () => setIsOnline(false);
 
@@ -702,7 +707,8 @@ export function useSync(
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [currentUserId, ensureUserProfile, updatePendingCount, triggerSync]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
 
   return { isOnline, isSyncing, pendingCount, syncError, triggerSync, updatePendingCount };
 }
