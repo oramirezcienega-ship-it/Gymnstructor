@@ -40,26 +40,12 @@ export function useSync(
       setPendingCount(0);
       return;
     }
-    const pProfiles = await db.profiles.where('id').equals(currentUserId).and(p => p.synced === 0).count();
-    const pRoutines = await db.routines.where('user_id').equals(currentUserId).and(r => r.synced === 0).count();
-    
-    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
-    const routineIds = userRoutines.map(r => r.id);
-    
-    let pExercises = 0;
-    let pLogs = 0;
-    
-    if (routineIds.length > 0) {
-      pExercises = await db.exercises.where('synced').equals(0).and(ex => routineIds.includes(ex.routine_id)).count();
-      
-      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
-      const exerciseIds = userExercises.map(ex => ex.id);
-      if (exerciseIds.length > 0) {
-        pLogs = await db.workout_logs.where('synced').equals(0).and(log => exerciseIds.includes(log.exercise_id)).count();
-      }
-    }
-    
-    const pMetrics = await db.body_metrics.where('user_id').equals(currentUserId).and(m => m.synced === 0).count();
+    const pProfiles = await db.profiles.where('synced').equals(0).count();
+    const pRoutines = await db.routines.where('synced').equals(0).count();
+    const pExercises = await db.exercises.where('synced').equals(0).count();
+    const pLogs = await db.workout_logs.where('synced').equals(0).count();
+    const pMetrics = await db.body_metrics.where('synced').equals(0).count();
+
     setPendingCount(pProfiles + pRoutines + pExercises + pLogs + pMetrics);
   }, [currentUserId]);
 
@@ -206,17 +192,11 @@ export function useSync(
       }
     }
 
-    // Obtener rutinas de este usuario para sincronizar ejercicios y logs relacionados
-    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
-    const routineIds = userRoutines.map(r => r.id);
-
     // 3. Sincronizar ejercicios
-    if (routineIds.length > 0) {
-      const unsyncedExercises = await db.exercises
-        .where('synced')
-        .equals(0)
-        .and(ex => routineIds.includes(ex.routine_id))
-        .toArray();
+    const unsyncedExercises = await db.exercises
+      .where('synced')
+      .equals(0)
+      .toArray();
 
       for (const exercise of unsyncedExercises) {
         const { data: serverExercise, error: getError } = await supabase
@@ -293,16 +273,11 @@ export function useSync(
         }
       }
 
-      // 4. Sincronizar registros de entrenamiento (Workout Logs)
-      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
-      const exerciseIds = userExercises.map(ex => ex.id);
-
-      if (exerciseIds.length > 0) {
-        const unsyncedLogs = await db.workout_logs
-          .where('synced')
-          .equals(0)
-          .and(log => exerciseIds.includes(log.exercise_id))
-          .toArray();
+    // 4. Sincronizar registros de entrenamiento (Workout Logs)
+    const unsyncedLogs = await db.workout_logs
+      .where('synced')
+      .equals(0)
+      .toArray();
 
         for (const log of unsyncedLogs) {
           const { data: serverLog, error: getError } = await supabase
@@ -370,14 +345,11 @@ export function useSync(
             }
           }
         }
-      }
-    }
 
     // 5. Sincronizar métricas corporales (Body Metrics)
     const unsyncedMetrics = await db.body_metrics
-      .where('user_id')
-      .equals(currentUserId)
-      .and(m => m.synced === 0)
+      .where('synced')
+      .equals(0)
       .toArray();
 
     for (const metric of unsyncedMetrics) {
