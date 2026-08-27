@@ -2488,31 +2488,91 @@ function App() {
                     .slice()
                     .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime())
                     .map(m => (
-                      <div key={m.id} className="glass-card rounded-xl p-3 border border-slate-900 flex justify-between items-center">
-                        <div className="space-y-1">
-                          <p className="text-[10px] text-slate-455 font-semibold">{formatDate(m.logged_at)}</p>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-white mt-1">
-                            <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
-                            {(m.bmi || userHeight > 0) && (
-                              <span>IMC: <span className="text-emerald-400">{m.bmi || (m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}</span></span>
+                      <div key={m.id} className="glass-card rounded-2xl p-3.5 border border-slate-900 space-y-3 shadow-sm hover:border-slate-800 transition-all">
+                        {/* Cabecera de la tarjeta con fecha y acciones */}
+                        <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1 rounded-md bg-emerald-500/10 text-emerald-400">
+                              <Calendar className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="text-xs font-bold text-slate-200 tracking-wide">
+                              {formatDate(m.logged_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {m.synced === 0 && (
+                              <span className="flex items-center gap-1 text-[9px] font-semibold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
+                                Pendiente
+                              </span>
                             )}
-                            {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
-                            {m.muscle_mass > 0 && <span>Mús. Esq: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
-                            {m.bmr && m.bmr > 0 && <span>Metab. Basal: <span className="text-emerald-400">{m.bmr} kcal</span></span>}
-                            {m.body_age && m.body_age > 0 && <span>Edad Corp.: <span className="text-emerald-400">{m.body_age} años</span></span>}
-                            {m.visceral_fat && m.visceral_fat > 0 && <span>Grasa Visc.: <span className="text-emerald-400">{m.visceral_fat}</span></span>}
+                            <button
+                              onClick={() => handleDeleteBodyMetric(m.id)}
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                              title="Eliminar medición"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {m.synced === 0 && (
-                            <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" title="Sincronización pendiente"></span>
+
+                        {/* Cuadrícula organizada de mediciones (1 al 7) */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                          {/* 1. Peso */}
+                          <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">1. Peso</span>
+                            <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.weight} <span className="text-[10px] font-semibold text-emerald-500/80">kg</span></span>
+                          </div>
+
+                          {/* 2. IMC */}
+                          {(m.bmi || userHeight > 0) && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">2. IMC</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">
+                                {m.bmi || (m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}
+                              </span>
+                            </div>
                           )}
-                          <button
-                            onClick={() => handleDeleteBodyMetric(m.id)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+
+                          {/* 3. % Grasa */}
+                          {m.body_fat > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">3. % Grasa</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.body_fat} <span className="text-[10px] font-semibold text-emerald-500/80">%</span></span>
+                            </div>
+                          )}
+
+                          {/* 4. % Mús. Esq. */}
+                          {m.muscle_mass > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">4. % Mús. Esq.</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.muscle_mass} <span className="text-[10px] font-semibold text-emerald-500/80">%</span></span>
+                            </div>
+                          )}
+
+                          {/* 5. Metab. Basal */}
+                          {m.bmr && m.bmr > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">5. Metab. Basal</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.bmr} <span className="text-[10px] font-semibold text-emerald-500/80">kcal</span></span>
+                            </div>
+                          )}
+
+                          {/* 6. Edad Corporal */}
+                          {m.body_age && m.body_age > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">6. Edad Corp.</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.body_age} <span className="text-[10px] font-semibold text-emerald-500/80">años</span></span>
+                            </div>
+                          )}
+
+                          {/* 7. Grasa Visceral */}
+                          {m.visceral_fat && m.visceral_fat > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">7. Grasa Visc.</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.visceral_fat}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
