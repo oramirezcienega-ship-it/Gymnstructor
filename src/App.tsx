@@ -185,6 +185,7 @@ function App() {
 
   // Estados para el registro de indicadores físicos en "Mi Progreso"
   const [weightInput, setWeightInput] = useState<string>('');
+  const [bmiInput, setBmiInput] = useState<string>('');
   const [fatInput, setFatInput] = useState<string>('');
   const [muscleInput, setMuscleInput] = useState<string>('');
   const [bmrInput, setBmrInput] = useState<string>('');
@@ -720,15 +721,22 @@ function App() {
     const metricId = generateUUID();
     
     try {
+      const calculatedBmi = bmiInput
+        ? Number(bmiInput)
+        : userHeight > 0 && weightInput
+        ? Number((Number(weightInput) / ((userHeight / 100) * (userHeight / 100))).toFixed(1))
+        : undefined;
+
       await db.body_metrics.add({
         id: metricId,
         user_id: currentUserId,
         weight: Number(weightInput),
+        bmi: calculatedBmi,
         body_fat: Number(fatInput) || 0,
         muscle_mass: Number(muscleInput) || 0,
         bmr: Number(bmrInput) || undefined,
-        visceral_fat: Number(visceralFatInput) || undefined,
         body_age: Number(bodyAgeInput) || undefined,
+        visceral_fat: Number(visceralFatInput) || undefined,
         logged_at: metricDate.includes('T') ? metricDate : new Date(`${metricDate}T12:00:00`).toISOString(),
         deleted: 0,
         created_at: now,
@@ -737,6 +745,7 @@ function App() {
       });
       
       setWeightInput('');
+      setBmiInput('');
       setFatInput('');
       setMuscleInput('');
       setBmrInput('');
@@ -2185,68 +2194,99 @@ function App() {
             <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Nueva Medición</h3>
               
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {/* 1. PESO / WEIGHT (KG) */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (kg)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">PESO / WEIGHT (KG)</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 75.4"
                     value={weightInput}
-                    onChange={e => setWeightInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    onChange={e => {
+                      const w = e.target.value;
+                      setWeightInput(w);
+                      if (userHeight > 0 && w && !isNaN(Number(w))) {
+                        const calc = (Number(w) / ((userHeight / 100) * (userHeight / 100))).toFixed(1);
+                        setBmiInput(calc);
+                      }
+                    }}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 2. IMC / BMI */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Grasa (Opc.)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">IMC / BMI</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ej: 24.2"
+                    value={bmiInput}
+                    onChange={e => setBmiInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
+                  />
+                </div>
+
+                {/* 3. % GRASA / BODY FAT */}
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">% GRASA / BODY FAT</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 15.2"
                     value={fatInput}
                     onChange={e => setFatInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 4. % MÚS. ESQ. / MUSCLE */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Mús. Esq. (Opc.)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">% MÚS. ESQ. / MUSCLE</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 42.1"
                     value={muscleInput}
                     onChange={e => setMuscleInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 5. METAB. BASAL / RM KCAL */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Metab. Basal (kcal)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">METAB. BASAL / RM KCAL</label>
                   <input
                     type="number"
                     placeholder="Ej: 1650"
                     value={bmrInput}
                     onChange={e => setBmrInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 6. EDAD CORPORAL / BODY AGE */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Grasa Visceral</label>
-                  <input
-                    type="number"
-                    placeholder="Ej: 5"
-                    value={visceralFatInput}
-                    onChange={e => setVisceralFatInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Edad Corporal</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">EDAD CORPORAL / BODY AGE</label>
                   <input
                     type="number"
                     placeholder="Ej: 28"
                     value={bodyAgeInput}
                     onChange={e => setBodyAgeInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
+                  />
+                </div>
+
+                {/* 7. GRASA VISCERAL / VISCERAL FAT */}
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">GRASA VISCERAL / VISCERAL FAT</label>
+                  <input
+                    type="number"
+                    placeholder="Ej: 5"
+                    value={visceralFatInput}
+                    onChange={e => setVisceralFatInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
               </div>
@@ -2453,14 +2493,14 @@ function App() {
                           <p className="text-[10px] text-slate-455 font-semibold">{formatDate(m.logged_at)}</p>
                           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-white mt-1">
                             <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
-                            {userHeight > 0 && (
-                              <span>IMC: <span className="text-emerald-400">{(m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}</span></span>
+                            {(m.bmi || userHeight > 0) && (
+                              <span>IMC: <span className="text-emerald-400">{m.bmi || (m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}</span></span>
                             )}
                             {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
                             {m.muscle_mass > 0 && <span>Mús. Esq: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
                             {m.bmr && m.bmr > 0 && <span>Metab. Basal: <span className="text-emerald-400">{m.bmr} kcal</span></span>}
-                            {m.visceral_fat && m.visceral_fat > 0 && <span>Grasa Visceral: <span className="text-emerald-400">{m.visceral_fat}</span></span>}
-                            {m.body_age && m.body_age > 0 && <span>Edad Corporal: <span className="text-emerald-400">{m.body_age} años</span></span>}
+                            {m.body_age && m.body_age > 0 && <span>Edad Corp.: <span className="text-emerald-400">{m.body_age} años</span></span>}
+                            {m.visceral_fat && m.visceral_fat > 0 && <span>Grasa Visc.: <span className="text-emerald-400">{m.visceral_fat}</span></span>}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
