@@ -107,4 +107,12 @@ CREATE TABLE IF NOT EXISTS public.community_exercises (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- Migraciones complementarias (ejecutar si la tabla body_metrics o exercises ya existían en la base de datos)
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS bmi NUMERIC DEFAULT 0.0;
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS bmr NUMERIC DEFAULT 0.0;
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS visceral_fat NUMERIC DEFAULT 0.0;
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS body_age NUMERIC DEFAULT 0.0;
+ALTER TABLE public.exercises ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
+
+
 
