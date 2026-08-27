@@ -881,8 +881,11 @@ function App() {
     setRoutineName(routine.name);
     setRoutineDescription(routine.description);
     
-    // Filtrar los ejercicios de esta rutina que no estén borrados
-    const existing = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+    // Filtrar los ejercicios de esta rutina que no estén borrados y ordenarlos por fecha de creación
+    const existing = (exercises || [])
+      .filter(ex => ex.routine_id === routine.id && ex.deleted === 0)
+      .slice()
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     setRoutineExercises(existing);
     setView('edit_routine');
   };
@@ -904,6 +907,17 @@ function App() {
   const handleRemoveExerciseRow = (index: number) => {
     const copy = [...routineExercises];
     copy.splice(index, 1);
+    setRoutineExercises(copy);
+  };
+
+  const handleMoveEditExercise = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === routineExercises.length - 1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const copy = [...routineExercises];
+    const temp = copy[index];
+    copy[index] = copy[targetIndex];
+    copy[targetIndex] = temp;
     setRoutineExercises(copy);
   };
 
@@ -951,9 +965,14 @@ function App() {
       }
     }
 
-    // Guardar / actualizar los ejercicios de la lista actual
-    for (const ex of routineExercises) {
+    // Guardar / actualizar los ejercicios de la lista actual en su nuevo orden
+    const baseTime = Date.now();
+    for (let i = 0; i < routineExercises.length; i++) {
+      const ex = routineExercises[i];
       if (!ex.name?.trim()) continue;
+      
+      const itemCreatedAt = new Date(baseTime + i * 100).toISOString();
+
       const exData: LocalExercise = {
         id: ex.id || generateUUID(),
         routine_id: routineId,
@@ -963,7 +982,7 @@ function App() {
         reps: Number(ex.reps) || 10,
         weight: Number(ex.weight) || 0,
         deleted: 0,
-        created_at: ex.created_at || now,
+        created_at: itemCreatedAt,
         updated_at: now,
         synced: 0,
         image_data: ex.image_data
@@ -1006,7 +1025,10 @@ function App() {
   // --- ENTRENAMIENTO ACTIVO ---
   const handleStartWorkout = async (routine: LocalRoutine) => {
     setWorkoutRoutine(routine);
-    const rExercises = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+    const rExercises = (exercises || [])
+      .filter(ex => ex.routine_id === routine.id && ex.deleted === 0)
+      .slice()
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     
     // Inicializar la estructura del registro de series
     const initialSession: typeof workoutSessionLogs = {};
@@ -1544,7 +1566,10 @@ function App() {
               {routines && routines.length > 0 ? (
                 <div className="space-y-3">
                   {routines.map(routine => {
-                    const rExercises = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+                    const rExercises = (exercises || [])
+                      .filter(ex => ex.routine_id === routine.id && ex.deleted === 0)
+                      .slice()
+                      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
                     return (
                       <div 
                         key={routine.id} 
@@ -1723,9 +1748,32 @@ function App() {
                           )}
                         </div>
 
+                        {/* Reordenar ejercicios (Subir / Bajar) */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => handleMoveEditExercise(index, 'up')}
+                            className="p-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
+                            title="Subir posición"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === routineExercises.length - 1}
+                            onClick={() => handleMoveEditExercise(index, 'down')}
+                            className="p-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
+                            title="Bajar posición"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
                         <button
                           onClick={() => handleRemoveExerciseRow(index)}
                           className="p-2 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                          title="Eliminar ejercicio"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
