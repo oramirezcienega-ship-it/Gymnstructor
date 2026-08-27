@@ -1452,9 +1452,9 @@ function App() {
 
           {/* Sincronización */}
           <button
-            onClick={triggerSync}
-            disabled={isSyncing || !isOnline}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all ${
+            onClick={() => triggerSync(true)}
+            disabled={!isOnline}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
               pendingCount > 0
                 ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 shadow-lg shadow-amber-500/20'
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 disabled:opacity-50'

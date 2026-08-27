@@ -402,12 +402,12 @@ export function useSync(
             id: metric.id,
             user_id: metric.user_id,
             weight: metric.weight,
-            bmi: metric.bmi,
-            body_fat: metric.body_fat,
-            muscle_mass: metric.muscle_mass,
-            bmr: metric.bmr,
-            body_age: metric.body_age,
-            visceral_fat: metric.visceral_fat,
+            bmi: metric.bmi || 0,
+            body_fat: metric.body_fat || 0,
+            muscle_mass: metric.muscle_mass || 0,
+            bmr: metric.bmr || 0,
+            body_age: metric.body_age || 0,
+            visceral_fat: metric.visceral_fat || 0,
             logged_at: metric.logged_at,
             deleted: metric.deleted === 1,
             updated_at: metric.updated_at,
@@ -430,12 +430,12 @@ export function useSync(
           id: metric.id,
           user_id: metric.user_id,
           weight: metric.weight,
-          bmi: metric.bmi,
-          body_fat: metric.body_fat,
-          muscle_mass: metric.muscle_mass,
-          bmr: metric.bmr,
-          body_age: metric.body_age,
-          visceral_fat: metric.visceral_fat,
+          bmi: metric.bmi || 0,
+          body_fat: metric.body_fat || 0,
+          muscle_mass: metric.muscle_mass || 0,
+          bmr: metric.bmr || 0,
+          body_age: metric.body_age || 0,
+          visceral_fat: metric.visceral_fat || 0,
           logged_at: metric.logged_at,
           deleted: metric.deleted === 1,
           created_at: metric.created_at,
@@ -685,8 +685,8 @@ export function useSync(
   }, [currentUserId]);
 
   // Función principal de disparo de sincronización
-  const triggerSync = useCallback(async () => {
-    if (!navigator.onLine || isSyncing || !currentUserId) return;
+  const triggerSync = useCallback(async (force = false) => {
+    if (!navigator.onLine || (!force && isSyncing) || !currentUserId) return;
     setIsSyncing(true);
     setSyncError(null);
     try {
