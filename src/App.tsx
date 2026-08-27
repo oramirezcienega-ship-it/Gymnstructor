@@ -82,12 +82,44 @@ function App() {
   // Función para formatear fechas a DD/MM/YYYY
   const formatDate = (dateValue: string | Date | undefined | null): string => {
     if (!dateValue) return '';
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      const parts = dateValue.split('T')[0].split('-');
+      if (parts.length === 3) {
+        const [y, m, d] = parts;
+        return `${d}/${m}/${y}`;
+      }
+    }
     const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
     if (isNaN(date.getTime())) return '';
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
     return `${day}/${month}/${year}`;
+  };
+
+  // Función para formatear fechas cortas para gráficas (ej. "29 jul")
+  const formatShortDate = (dateValue: string | Date | undefined | null): string => {
+    if (!dateValue) return '';
+    let dayStr = '';
+    let monthIndex = -1;
+    const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      const parts = dateValue.split('T')[0].split('-');
+      if (parts.length === 3) {
+        dayStr = parts[2];
+        monthIndex = parseInt(parts[1], 10) - 1;
+      }
+    }
+
+    if (monthIndex < 0 || monthIndex > 11 || !dayStr) {
+      const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
+      if (isNaN(date.getTime())) return '';
+      dayStr = String(date.getDate());
+      monthIndex = date.getMonth();
+    }
+
+    return `${parseInt(dayStr, 10)} ${monthNames[monthIndex]}`;
   };
 
   // Estados para la comunidad
@@ -122,9 +154,10 @@ function App() {
     [currentUserId]
   );
   const bodyMetrics = useLiveQuery(
-    () => {
+    async () => {
       if (!currentUserId) return [];
-      return db.body_metrics.where('user_id').equals(currentUserId).and(m => m.deleted === 0).toArray();
+      const list = await db.body_metrics.where('user_id').equals(currentUserId).and(m => m.deleted === 0).toArray();
+      return list.sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime());
     },
     [currentUserId]
   );
@@ -159,6 +192,7 @@ function App() {
   const [bodyAgeInput, setBodyAgeInput] = useState<string>('');
   const [metricDate, setMetricDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
+  const [hoveredMetricId, setHoveredMetricId] = useState<string | null>(null);
   
   // Inputs del perfil físico
   const [userHeight, setUserHeight] = useState<number>(0);
@@ -695,7 +729,7 @@ function App() {
         bmr: Number(bmrInput) || undefined,
         visceral_fat: Number(visceralFatInput) || undefined,
         body_age: Number(bodyAgeInput) || undefined,
-        logged_at: new Date(metricDate).toISOString(),
+        logged_at: metricDate.includes('T') ? metricDate : new Date(`${metricDate}T12:00:00`).toISOString(),
         deleted: 0,
         created_at: now,
         updated_at: now,
@@ -2078,7 +2112,7 @@ function App() {
 
             {/* Cálculo y Diagnóstico de IMC */}
             {(() => {
-              const latestMetric = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).pop();
+              const latestMetric = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).slice().sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime()).pop();
               if (!latestMetric || !userHeight || userHeight <= 0) return null;
               
               const heightMeters = userHeight / 100;
@@ -2237,7 +2271,13 @@ function App() {
 
             {/* Gráfico evolutivo en SVG */}
             {(() => {
-              const activeMetrics = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0);
+              const activeMetrics = bodyMetrics
+                ? bodyMetrics
+                    .filter(m => m.deleted === 0)
+                    .slice()
+                    .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime())
+                : [];
+
               if (!activeMetrics || activeMetrics.length < 2) {
                 return (
                   <div className="h-44 flex flex-col items-center justify-center bg-slate-900/20 rounded-2xl border border-slate-900 border-dashed p-4 text-center">
@@ -2248,47 +2288,150 @@ function App() {
                 );
               }
               
-              const padding = 30;
               const chartWidth = 350;
-              const chartHeight = 150;
+              const chartHeight = 175;
+              const paddingX = 38;
+              const paddingTop = 32;
+              const paddingBottom = 38;
               
               const weights = activeMetrics.map(m => m.weight);
-              const minWeight = Math.min(...weights) - 2;
-              const maxWeight = Math.max(...weights) + 2;
+              const minWeight = Math.min(...weights) - 1;
+              const maxWeight = Math.max(...weights) + 1;
               const weightRange = maxWeight - minWeight || 1;
               
+              const plotWidth = chartWidth - paddingX * 2;
+              const plotHeight = chartHeight - paddingTop - paddingBottom;
+              
               const points = activeMetrics.map((m, idx) => {
-                const x = padding + (idx / (activeMetrics.length - 1)) * (chartWidth - padding * 2);
-                const y = chartHeight - padding - ((m.weight - minWeight) / weightRange) * (chartHeight - padding * 2);
+                const x = paddingX + (idx / (activeMetrics.length - 1)) * plotWidth;
+                const y = (chartHeight - paddingBottom) - ((m.weight - minWeight) / weightRange) * plotHeight;
                 return { x, y, ...m };
               });
               
-              const pathD = `M ${points.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+              const pathD = `M ${points.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L ')}`;
+              const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${(chartHeight - paddingBottom).toFixed(1)} L ${points[0].x.toFixed(1)} ${(chartHeight - paddingBottom).toFixed(1)} Z`;
               
+              const showDateIndices = new Set<number>();
+              if (points.length <= 6) {
+                points.forEach((_, i) => showDateIndices.add(i));
+              } else {
+                showDateIndices.add(0);
+                showDateIndices.add(points.length - 1);
+                const step = Math.ceil(points.length / 4);
+                for (let i = step; i < points.length - 1; i += step) {
+                  showDateIndices.add(i);
+                }
+              }
+
               return (
                 <div className="glass-card p-4 rounded-2xl border border-slate-900 space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Evolución de Peso</h4>
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Evolución de Peso</h4>
+                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      {activeMetrics.length} mediciones
+                    </span>
+                  </div>
                   <div className="relative">
-                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-auto">
-                      {/* Grid Lines */}
-                      <line x1={padding} y1={padding} x2={chartWidth - padding} y2={padding} stroke="#1e293b" strokeDasharray="3" />
-                      <line x1={padding} y1={chartHeight - padding} x2={chartWidth - padding} y2={chartHeight - padding} stroke="#1e293b" strokeDasharray="3" />
+                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-auto overflow-visible">
+                      <defs>
+                        <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                          <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Líneas de cuadrícula de fondo */}
+                      <line x1={paddingX} y1={paddingTop} x2={chartWidth - paddingX} y2={paddingTop} stroke="#1e293b" strokeDasharray="3" />
+                      <line x1={paddingX} y1={paddingTop + plotHeight / 2} x2={chartWidth - paddingX} y2={paddingTop + plotHeight / 2} stroke="#1e293b" strokeDasharray="3" />
+                      <line x1={paddingX} y1={chartHeight - paddingBottom} x2={chartWidth - paddingX} y2={chartHeight - paddingBottom} stroke="#334155" strokeWidth="1" />
                       
-                      {/* Line */}
+                      {/* Área sombreada bajo la curva */}
+                      <path d={areaD} fill="url(#weightGradient)" />
+                      
+                      {/* Línea principal */}
                       <path d={pathD} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                       
-                      {/* Points */}
-                      {points.map((p, idx) => (
-                        <g key={p.id}>
-                          <circle cx={p.x} cy={p.y} r="3" fill="#020617" stroke="#10b981" strokeWidth="2" />
-                          {/* Tooltip on last weight */}
-                          {idx === points.length - 1 && (
-                            <text x={p.x} y={p.y - 8} fill="#10b981" fontSize="8" fontWeight="bold" textAnchor="middle">
-                              {p.weight} kg
-                            </text>
-                          )}
-                        </g>
-                      ))}
+                      {/* Puntos, Etiquetas de Peso y Fechas */}
+                      {points.map((p, idx) => {
+                        const isLast = idx === points.length - 1;
+                        const isMin = p.weight === Math.min(...weights);
+                        const isMax = p.weight === Math.max(...weights);
+                        const isHovered = hoveredMetricId === p.id;
+                        const showWeightLabel = isHovered || points.length <= 6 || isLast || isMin || isMax;
+                        
+                        return (
+                          <g
+                            key={p.id || idx}
+                            className="cursor-pointer"
+                            onMouseEnter={() => setHoveredMetricId(p.id)}
+                            onMouseLeave={() => setHoveredMetricId(null)}
+                            onClick={() => setHoveredMetricId(prev => prev === p.id ? null : p.id)}
+                          >
+                            {/* Tick mark en eje X */}
+                            <line
+                              x1={p.x}
+                              y1={chartHeight - paddingBottom}
+                              x2={p.x}
+                              y2={chartHeight - paddingBottom + 4}
+                              stroke={isHovered ? "#10b981" : "#475569"}
+                              strokeWidth={isHovered ? "1.5" : "1"}
+                            />
+
+                            {/* Círculo invisible táctil / hover */}
+                            <circle cx={p.x} cy={p.y} r="12" fill="transparent" />
+
+                            {/* Círculo indicador */}
+                            <circle
+                              cx={p.x}
+                              cy={p.y}
+                              r={isHovered ? "5.5" : isLast ? "4.5" : "3.5"}
+                              fill={isHovered || isLast ? "#10b981" : "#020617"}
+                              stroke="#10b981"
+                              strokeWidth={isHovered ? "3" : "2"}
+                            />
+                            
+                            {/* Etiqueta de Peso (arriba del punto) */}
+                            {showWeightLabel && (
+                              <g>
+                                <rect
+                                  x={p.x - 20}
+                                  y={p.y - 20}
+                                  width="40"
+                                  height="15"
+                                  rx="4"
+                                  fill="#090d16"
+                                  stroke={isHovered ? "#10b981" : isLast ? "#10b981" : "#334155"}
+                                  strokeWidth="1"
+                                />
+                                <text
+                                  x={p.x}
+                                  y={p.y - 9}
+                                  fill={isHovered || isLast ? "#10b981" : "#e2e8f0"}
+                                  fontSize="8.5"
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  {p.weight} kg
+                                </text>
+                              </g>
+                            )}
+
+                            {/* Etiqueta de Fecha (abajo en eje X) */}
+                            {showDateIndices.has(idx) && (
+                              <text
+                                x={p.x}
+                                y={chartHeight - 12}
+                                fill={isHovered ? "#10b981" : "#94a3b8"}
+                                fontSize="8.5"
+                                fontWeight={isHovered ? "700" : "600"}
+                                textAnchor="middle"
+                              >
+                                {formatShortDate(p.logged_at)}
+                              </text>
+                            )}
+                          </g>
+                        );
+                      })}
                     </svg>
                   </div>
                 </div>
@@ -2303,7 +2446,7 @@ function App() {
                   {bodyMetrics
                     .filter(m => m.deleted === 0)
                     .slice()
-                    .reverse()
+                    .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime())
                     .map(m => (
                       <div key={m.id} className="glass-card rounded-xl p-3 border border-slate-900 flex justify-between items-center">
                         <div className="space-y-1">
