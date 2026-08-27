@@ -33,6 +33,7 @@ export interface LocalExercise {
   series: number;
   reps: number;
   weight: number;
+  order_index?: number; // Orden posicional de ejecución
   deleted: number; // 0 = false, 1 = true
   created_at: string;
   updated_at: string;

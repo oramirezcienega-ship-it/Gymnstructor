@@ -112,7 +112,7 @@ function App() {
       }
     }
 
-    if (monthIndex < 0 || monthIndex > 11 || !dayStr) {
+    if (monthIndex < 0 || monthIndex > 11) {
       const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
       if (isNaN(date.getTime())) return '';
       dayStr = String(date.getDate());
@@ -120,6 +120,18 @@ function App() {
     }
 
     return `${parseInt(dayStr, 10)} ${monthNames[monthIndex]}`;
+  };
+
+  // Función para ordenar ejercicios respetando order_index
+  const sortExercises = <T extends Partial<LocalExercise>>(list: T[]): T[] => {
+    return list.slice().sort((a, b) => {
+      if (a.order_index !== undefined && b.order_index !== undefined) {
+        return a.order_index - b.order_index;
+      }
+      const timeA = new Date(a.created_at || a.updated_at || 0).getTime();
+      const timeB = new Date(b.created_at || b.updated_at || 0).getTime();
+      return timeA - timeB;
+    });
   };
 
   // Estados para la comunidad
@@ -600,7 +612,7 @@ function App() {
     
     setIsLoading(true);
     try {
-      const localExs = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+      const localExs = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
       
       const { data: sharedRoutine, error: routineError } = await supabase
         .from('community_routines')
@@ -881,11 +893,8 @@ function App() {
     setRoutineName(routine.name);
     setRoutineDescription(routine.description);
     
-    // Filtrar los ejercicios de esta rutina que no estén borrados y ordenarlos por fecha de creación
-    const existing = (exercises || [])
-      .filter(ex => ex.routine_id === routine.id && ex.deleted === 0)
-      .slice()
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    // Filtrar los ejercicios de esta rutina que no estén borrados y ordenarlos por posición
+    const existing = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     setRoutineExercises(existing);
     setView('edit_routine');
   };
@@ -966,12 +975,9 @@ function App() {
     }
 
     // Guardar / actualizar los ejercicios de la lista actual en su nuevo orden
-    const baseTime = Date.now();
     for (let i = 0; i < routineExercises.length; i++) {
       const ex = routineExercises[i];
       if (!ex.name?.trim()) continue;
-      
-      const itemCreatedAt = new Date(baseTime + i * 100).toISOString();
 
       const exData: LocalExercise = {
         id: ex.id || generateUUID(),
@@ -981,8 +987,9 @@ function App() {
         series: Number(ex.series) || 3,
         reps: Number(ex.reps) || 10,
         weight: Number(ex.weight) || 0,
+        order_index: i,
         deleted: 0,
-        created_at: itemCreatedAt,
+        created_at: ex.created_at || now,
         updated_at: now,
         synced: 0,
         image_data: ex.image_data
@@ -1025,10 +1032,7 @@ function App() {
   // --- ENTRENAMIENTO ACTIVO ---
   const handleStartWorkout = async (routine: LocalRoutine) => {
     setWorkoutRoutine(routine);
-    const rExercises = (exercises || [])
-      .filter(ex => ex.routine_id === routine.id && ex.deleted === 0)
-      .slice()
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     
     // Inicializar la estructura del registro de series
     const initialSession: typeof workoutSessionLogs = {};
@@ -1566,10 +1570,7 @@ function App() {
               {routines && routines.length > 0 ? (
                 <div className="space-y-3">
                   {routines.map(routine => {
-                    const rExercises = (exercises || [])
-                      .filter(ex => ex.routine_id === routine.id && ex.deleted === 0)
-                      .slice()
-                      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                    const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
                     return (
                       <div 
                         key={routine.id} 
