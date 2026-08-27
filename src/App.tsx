@@ -26,7 +26,9 @@ import {
   AlertCircle,
   Lock,
   Scale,
-  User
+  User,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react';
 
 const getExerciseImage = (name: string): string | null => {
@@ -1700,7 +1702,7 @@ function App() {
               </div>
 
               {routineExercises.length > 0 ? (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {routineExercises.map((ex, index) => (
                     <div key={ex.id} className="glass-card rounded-2xl p-4 border border-slate-900 space-y-3">
                       <div className="flex items-center justify-between gap-2">
@@ -1709,25 +1711,94 @@ function App() {
                           placeholder="Nombre del Ejercicio (Ej: Press Banca)"
                           value={ex.name || ''}
                           onChange={e => handleExerciseChange(index, 'name', e.target.value)}
-                          className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                          className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-emerald-500/50"
                         />
                         
-                        {/* Subir/Ver Imagen de Referencia */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {ex.image_data ? (
-                            <div className="relative w-8 h-8 rounded-lg border border-slate-850 overflow-hidden group" title="Haz clic en la X para eliminar">
-                              <img src={ex.image_data} className="w-full h-full object-cover" />
-                              <button
-                                type="button"
-                                onClick={() => handleExerciseChange(index, 'image_data', undefined)}
-                                className="absolute inset-0 bg-rose-950/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-rose-400 cursor-pointer"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
+                        {/* Reordenar ejercicios (Subir / Bajar) */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => handleMoveEditExercise(index, 'up')}
+                            className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
+                            title="Subir posición"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === routineExercises.length - 1}
+                            onClick={() => handleMoveEditExercise(index, 'down')}
+                            className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
+                            title="Bajar posición"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExerciseRow(index)}
+                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                          title="Eliminar ejercicio"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Indicador y Selector de Foto de Referencia */}
+                      {(() => {
+                        const customImage = ex.image_data;
+                        const defaultImage = getExerciseImage(ex.name || '');
+                        const hasImage = Boolean(customImage || defaultImage);
+                        const currentImg = customImage || defaultImage;
+
+                        return (
+                          <div className="flex items-center justify-between bg-slate-950/60 p-2.5 rounded-xl border border-slate-900 gap-3">
+                            <div className="flex items-center gap-3">
+                              {hasImage && currentImg ? (
+                                <div className="relative w-12 h-12 rounded-lg border border-slate-800 overflow-hidden shrink-0 bg-slate-900">
+                                  <img src={currentImg} alt={ex.name || 'Ejercicio'} className="w-full h-full object-cover" />
+                                  {customImage && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleExerciseChange(index, 'image_data', undefined)}
+                                      className="absolute top-0.5 right-0.5 bg-rose-950/90 text-rose-300 p-0.5 rounded-md hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
+                                      title="Quitar foto personalizada"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg border border-dashed border-slate-800 flex items-center justify-center shrink-0 bg-slate-950/40 text-slate-600">
+                                  <ImageIcon className="w-5 h-5" />
+                                </div>
+                              )}
+
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`w-2 h-2 rounded-full ${hasImage ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                                  <p className="text-xs font-bold text-slate-200">
+                                    {customImage 
+                                      ? 'Foto Personalizada' 
+                                      : defaultImage 
+                                      ? 'Foto Estándar' 
+                                      : 'Sin foto asignada'}
+                                  </p>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5">
+                                  {hasImage 
+                                    ? 'Esta foto se mostrará al ejecutar la rutina' 
+                                    : 'Sube una foto para guiar la ejecución'}
+                                </p>
+                              </div>
                             </div>
-                          ) : (
-                            <label className="w-8 h-8 rounded-lg border border-dashed border-slate-800 hover:border-emerald-500/50 flex items-center justify-center cursor-pointer text-slate-500 hover:text-emerald-400 transition-all" title="Subir imagen de referencia">
-                              <Plus className="w-3.5 h-3.5" />
+
+                            {/* Botón para subir o cambiar foto */}
+                            <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-emerald-400 border border-slate-800 hover:border-emerald-500/30 transition-all cursor-pointer shrink-0">
+                              <Camera className="w-3.5 h-3.5" />
+                              <span>{customImage ? 'Cambiar Foto' : 'Adjuntar Foto'}</span>
                               <input
                                 type="file"
                                 accept="image/*"
@@ -1746,39 +1817,9 @@ function App() {
                                 }}
                               />
                             </label>
-                          )}
-                        </div>
-
-                        {/* Reordenar ejercicios (Subir / Bajar) */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            disabled={index === 0}
-                            onClick={() => handleMoveEditExercise(index, 'up')}
-                            className="p-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
-                            title="Subir posición"
-                          >
-                            <ChevronUp className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={index === routineExercises.length - 1}
-                            onClick={() => handleMoveEditExercise(index, 'down')}
-                            className="p-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
-                            title="Bajar posición"
-                          >
-                            <ChevronDown className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        <button
-                          onClick={() => handleRemoveExerciseRow(index)}
-                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
-                          title="Eliminar ejercicio"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                          </div>
+                        );
+                      })()}
 
                       <div className="grid grid-cols-4 gap-2">
                         <div>
