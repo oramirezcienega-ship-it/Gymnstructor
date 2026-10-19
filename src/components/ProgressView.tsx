@@ -22,7 +22,11 @@ import {
   Clock,
   HeartPulse,
   Activity,
-  CheckCircle2
+  CheckCircle2,
+  Brain,
+  Award,
+  Target,
+  ShieldCheck
 } from 'lucide-react';
 
 interface ProgressViewProps {
@@ -490,8 +494,8 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   }, [chartPoints]);
 
   // Dimensiones del SVG del gráfico
-  const svgWidth = 760;
-  const svgHeight = 250;
+  const svgWidth = 880;
+  const svgHeight = 260;
   const paddingLeft = 55;
   const paddingRight = 30;
   const paddingTop = 30;
@@ -593,6 +597,207 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     };
   }, [latestMetric, userHeight]);
 
+  // --- MOTOR DE ANÁLISIS INTELIGENTE DE PROGRESO CON IA (EVOLUCIÓN & LOGROS) ---
+  const aiAnalysis = useMemo(() => {
+    if (chronologicalMetrics.length === 0) {
+      return {
+        hasData: false,
+        totalMeasurements: 0,
+        title: 'Sin mediciones registradas',
+        summary: 'Comienza registrando tu primer peso y métricas biométricas para activar el análisis inteligente de evolución.',
+        achievements: [],
+        coachTip: 'Registra tus datos con regularidad (por ejemplo cada 1 o 2 semanas en ayunas) para obtener un análisis de alta precisión.',
+        deltas: null,
+        firstMetrics: null,
+        latestMetrics: null,
+        timespanDays: 0
+      };
+    }
+
+    if (chronologicalMetrics.length === 1) {
+      const first = chronologicalMetrics[0];
+      return {
+        hasData: true,
+        isBaseline: true,
+        totalMeasurements: 1,
+        timespanDays: 0,
+        firstDate: first.logged_at,
+        lastDate: first.logged_at,
+        title: 'Línea Base Biológica Registrada',
+        summary: `Has establecido tu medición de partida con ${first.weight} kg${first.body_fat > 0 ? ` y ${first.body_fat}% de grasa` : ''}${first.muscle_mass > 0 ? ` (${first.muscle_mass}% músculo)` : ''}. La IA comenzará a trazar tu curva evolutiva, cambios metabólicos y logros en cuanto registres tu siguiente medición.`,
+        achievements: [
+          {
+            id: 'first_step',
+            title: 'Punto de Partida',
+            description: 'Primera medición establecida en el sistema',
+            badgeText: 'Base lista',
+            type: 'positive' as const
+          }
+        ],
+        coachTip: 'El mejor momento para registrar mediciones corporales es por la mañana, en ayunas y después de ir al baño, para maximizar la consistencia de los datos.',
+        deltas: null,
+        firstMetrics: first,
+        latestMetrics: first
+      };
+    }
+
+    // Análisis con 2 o más mediciones
+    const first = chronologicalMetrics[0];
+    const latest = chronologicalMetrics[chronologicalMetrics.length - 1];
+    const prev = chronologicalMetrics[chronologicalMetrics.length - 2];
+
+    const timespanMs = Math.abs(new Date(latest.logged_at).getTime() - new Date(first.logged_at).getTime());
+    const timespanDays = Math.max(1, Math.round(timespanMs / (1000 * 60 * 60 * 24)));
+
+    const deltaWeight = Number((latest.weight - first.weight).toFixed(2));
+    const deltaFat = first.body_fat > 0 && latest.body_fat > 0 ? Number((latest.body_fat - first.body_fat).toFixed(1)) : null;
+    const deltaMuscle = first.muscle_mass > 0 && latest.muscle_mass > 0 ? Number((latest.muscle_mass - first.muscle_mass).toFixed(1)) : null;
+    const deltaVisceral = first.visceral_fat && latest.visceral_fat ? latest.visceral_fat - first.visceral_fat : null;
+    const deltaBodyAge = first.body_age && latest.body_age ? latest.body_age - first.body_age : null;
+    const deltaBmr = first.bmr && latest.bmr ? latest.bmr - first.bmr : null;
+
+    // Deltas recientes vs la penúltima medición
+    const recentDeltaWeight = Number((latest.weight - prev.weight).toFixed(2));
+
+    // Determinar Logros Desbloqueados
+    const achievements: {
+      id: string;
+      title: string;
+      description: string;
+      badgeText: string;
+      type: 'positive' | 'neutral' | 'muscle' | 'fire';
+    }[] = [];
+
+    // 1. Logro de Peso
+    if (deltaWeight < -0.5) {
+      achievements.push({
+        id: 'weight_loss',
+        title: 'Pérdida de Peso Sostenida',
+        description: `Has reducido ${Math.abs(deltaWeight)} kg en ${timespanDays} días`,
+        badgeText: `-${Math.abs(deltaWeight)} kg`,
+        type: 'positive'
+      });
+    } else if (deltaWeight > 1.0 && deltaMuscle !== null && deltaMuscle > 0) {
+      achievements.push({
+        id: 'lean_bulk',
+        title: 'Ganancia Muscular Neta',
+        description: `Subiste +${deltaWeight} kg acompañado de aumento en masa muscular`,
+        badgeText: `+${deltaWeight} kg`,
+        type: 'muscle'
+      });
+    }
+
+    // 2. Logro de Grasa Visceral
+    if (deltaVisceral !== null && deltaVisceral < 0) {
+      achievements.push({
+        id: 'visceral_drop',
+        title: 'Reducción de Grasa Visceral',
+        description: `Grasa visceral reducida de nivel ${first.visceral_fat} a ${latest.visceral_fat}`,
+        badgeText: `${deltaVisceral} nivel${Math.abs(deltaVisceral) > 1 ? 'es' : ''}`,
+        type: 'positive'
+      });
+    }
+
+    // 3. Logro de Edad Corporal
+    if (deltaBodyAge !== null && deltaBodyAge < 0) {
+      achievements.push({
+        id: 'body_age_rejuvenation',
+        title: 'Rejuvenecimiento Biológico',
+        description: `Edad corporal reducida de ${first.body_age} a ${latest.body_age} años`,
+        badgeText: `${deltaBodyAge} años`,
+        type: 'positive'
+      });
+    }
+
+    // 4. Logro de Grasa Corporal
+    if (deltaFat !== null && deltaFat < 0) {
+      achievements.push({
+        id: 'body_fat_drop',
+        title: 'Oxidación Adiposa Efectiva',
+        description: `Porcentaje graso reducido de ${first.body_fat}% a ${latest.body_fat}%`,
+        badgeText: `${deltaFat}%`,
+        type: 'fire'
+      });
+    }
+
+    // 5. Logro de Masa Muscular
+    if (deltaMuscle !== null && deltaMuscle > 0) {
+      achievements.push({
+        id: 'muscle_gain',
+        title: 'Incremento Muscular Magro',
+        description: `Masa muscular aumentada de ${first.muscle_mass}% a ${latest.muscle_mass}%`,
+        badgeText: `+${deltaMuscle}%`,
+        type: 'muscle'
+      });
+    } else if (deltaMuscle !== null && Math.abs(deltaMuscle) <= 0.3 && deltaWeight < -1.0) {
+      achievements.push({
+        id: 'muscle_shield',
+        title: 'Blindaje de Masa Muscular',
+        description: `Mantienes ${latest.muscle_mass}% de músculo íntegro mientras pierdes peso`,
+        badgeText: `Músculo Protegido`,
+        type: 'muscle'
+      });
+    }
+
+    // 6. Constancia
+    if (chronologicalMetrics.length >= 5) {
+      achievements.push({
+        id: 'consistency',
+        title: 'Disciplina y Constancia',
+        description: `${chronologicalMetrics.length} registros biométricos continuos completados`,
+        badgeText: `${chronologicalMetrics.length} registros`,
+        type: 'positive'
+      });
+    }
+
+    // Diagnóstico narrativo general
+    let title = 'Evolución Corporal Positiva';
+    let summary = '';
+    let coachTip = '';
+
+    if (deltaWeight < 0 && (deltaFat === null || deltaFat <= 0) && (deltaMuscle === null || deltaMuscle >= -0.5)) {
+      title = 'Recomposición Corporal Favorable en Progreso';
+      summary = `Tu evolución muestra una reducción neta de ${Math.abs(deltaWeight)} kg${deltaFat !== null && deltaFat < 0 ? ` y ${Math.abs(deltaFat)}% de grasa corporal` : ''}${deltaVisceral !== null && deltaVisceral < 0 ? `, disminuyendo la grasa visceral a nivel ${latest.visceral_fat}` : ''}. Tu masa muscular se mantiene sólida en ${latest.muscle_mass ? `${latest.muscle_mass}%` : 'rango óptimo'}, confirmando una pérdida selectiva de tejido graso sin degradación muscular.`;
+      coachTip = 'Sigue priorizando la ingesta de proteína (~1.6 - 2.0g por kg de peso corporal) y la sobrecarga progresiva en el gimnasio para estimular la síntesis proteica muscular durante el déficit calórico.';
+    } else if (deltaWeight > 0 && deltaMuscle !== null && deltaMuscle > 0) {
+      title = 'Fase de Hipertrofia y Construcción Magra';
+      summary = `Has aumentado ${deltaWeight} kg acompañados de un incremento de +${deltaMuscle}% en músculo esquelético. Esta tendencia refleja una respuesta anabólica positiva a tu entrenamiento de fuerza.`;
+      coachTip = 'Mantén el control sobre el consumo de carbohidratos complejos y grasas saludables para maximizar la construcción de tejido muscular magro evitando picos innecesarios de grasa adiposa.';
+    } else if (deltaWeight < 0 && deltaMuscle !== null && deltaMuscle < -0.8) {
+      title = 'Atención a la Preservación Muscular';
+      summary = `Has bajado ${Math.abs(deltaWeight)} kg, pero se detecta una ligera disminución en el % de músculo esquelético (${deltaMuscle}%). Es recomendable ajustar la intensidad de entrenamiento y la nutrición.`;
+      coachTip = 'Eleva tu consumo de proteínas y asegúrate de no estar en un déficit calórico demasiado agresivo (>25%). Entrenar con pesos exigentes ayuda al cuerpo a retener masa muscular.';
+    } else {
+      title = 'Fase de Adaptación y Mantenimiento';
+      summary = `Tu composición corporal se mantiene estable en ${latest.weight} kg${latest.body_fat > 0 ? ` con ${latest.body_fat}% de grasa` : ''}${latest.muscle_mass > 0 ? ` y ${latest.muscle_mass}% de músculo` : ''}. La estabilidad es fundamental para consolidar adaptaciones metabólicas a largo plazo.`;
+      coachTip = 'Si tu meta es definir más o construir volumen, introduce un ajuste moderado en tus calorías diarias (+/- 250 kcal) o incrementa el volumen de series en tus ejercicios principales.';
+    }
+
+    return {
+      hasData: true,
+      isBaseline: false,
+      totalMeasurements: chronologicalMetrics.length,
+      timespanDays,
+      firstDate: first.logged_at,
+      lastDate: latest.logged_at,
+      title,
+      summary,
+      deltas: {
+        weight: deltaWeight,
+        bodyFat: deltaFat,
+        muscleMass: deltaMuscle,
+        visceralFat: deltaVisceral,
+        bodyAge: deltaBodyAge,
+        bmr: deltaBmr,
+        recentWeight: recentDeltaWeight
+      },
+      firstMetrics: first,
+      latestMetrics: latest,
+      achievements,
+      coachTip
+    };
+  }, [chronologicalMetrics]);
+
   return (
     <div className="space-y-6">
       {/* HEADER DE LA SECCIÓN */}
@@ -621,6 +826,145 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* ================= PANEL DE ANÁLISIS INTELIGENTE DE IA & LOGROS ================= */}
+      {aiAnalysis.hasData && (
+        <div className="glass-card rounded-3xl p-5 sm:p-6 border border-emerald-500/30 bg-gradient-to-br from-slate-900/95 via-emerald-950/20 to-slate-900/90 shadow-2xl shadow-emerald-500/5 relative overflow-hidden">
+          {/* Decoración de fondo sutil con brillo */}
+          <div className="absolute top-0 right-0 -translate-y-8 translate-x-8 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <div className="absolute bottom-0 left-1/3 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
+
+          {/* Cabecera del Panel IA */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80 relative z-10">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500/20 to-cyan-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-md shadow-emerald-500/10 shrink-0">
+                <Brain className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" /> Análisis de IA
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    {aiAnalysis.timespanDays ? `Trayectoria de ${aiAnalysis.timespanDays} días (${aiAnalysis.totalMeasurements} mediciones)` : 'Medición de partida'}
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white tracking-tight mt-0.5">
+                  {aiAnalysis.title}
+                </h3>
+              </div>
+            </div>
+
+            {/* Resumen rápido de progreso */}
+            {aiAnalysis.deltas && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Peso Total</span>
+                  <span className={`text-xs font-black ${aiAnalysis.deltas.weight <= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {aiAnalysis.deltas.weight > 0 ? `+${aiAnalysis.deltas.weight}` : aiAnalysis.deltas.weight} kg
+                  </span>
+                </div>
+                {aiAnalysis.deltas.bodyFat !== null && (
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">% Grasa</span>
+                    <span className={`text-xs font-black ${aiAnalysis.deltas.bodyFat <= 0 ? 'text-amber-300' : 'text-slate-300'}`}>
+                      {aiAnalysis.deltas.bodyFat > 0 ? `+${aiAnalysis.deltas.bodyFat}` : aiAnalysis.deltas.bodyFat}%
+                    </span>
+                  </div>
+                )}
+                {aiAnalysis.deltas.muscleMass !== null && (
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">% Músculo</span>
+                    <span className={`text-xs font-black ${aiAnalysis.deltas.muscleMass >= 0 ? 'text-cyan-400' : 'text-slate-400'}`}>
+                      {aiAnalysis.deltas.muscleMass > 0 ? `+${aiAnalysis.deltas.muscleMass}` : aiAnalysis.deltas.muscleMass}%
+                    </span>
+                  </div>
+                )}
+                {aiAnalysis.deltas.visceralFat !== null && (
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Grasa Visc.</span>
+                    <span className={`text-xs font-black ${aiAnalysis.deltas.visceralFat <= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {aiAnalysis.deltas.visceralFat > 0 ? `+${aiAnalysis.deltas.visceralFat}` : aiAnalysis.deltas.visceralFat} nivel
+                    </span>
+                  </div>
+                )}
+                {aiAnalysis.deltas.bodyAge !== null && (
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Edad Corp.</span>
+                    <span className={`text-xs font-black ${aiAnalysis.deltas.bodyAge <= 0 ? 'text-indigo-400' : 'text-slate-400'}`}>
+                      {aiAnalysis.deltas.bodyAge > 0 ? `+${aiAnalysis.deltas.bodyAge}` : aiAnalysis.deltas.bodyAge} años
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Cuerpo del Análisis: Texto diagnóstico y Consejos */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-4 relative z-10">
+            {/* Diagnóstico narrativo */}
+            <div className="lg:col-span-8 space-y-3">
+              <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-normal">
+                {aiAnalysis.summary}
+              </p>
+
+              {/* Logros / Hitos alcanzados */}
+              {aiAnalysis.achievements.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Award className="w-3.5 h-3.5 text-amber-400" /> Logros e Hitos Detectados
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                    {aiAnalysis.achievements.map(ach => (
+                      <div 
+                        key={ach.id}
+                        className="bg-slate-950/60 border border-slate-800/90 hover:border-slate-700/80 rounded-xl p-2.5 flex items-start justify-between gap-2 transition-all"
+                      >
+                        <div>
+                          <p className="text-xs font-bold text-white leading-tight">{ach.title}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{ach.description}</p>
+                        </div>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
+                          ach.type === 'positive' 
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                            : ach.type === 'muscle'
+                            ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+                            : ach.type === 'fire'
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                            : 'bg-slate-800 text-slate-300 border-slate-700'
+                        }`}>
+                          {ach.badgeText}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Consejo del Coach IA */}
+            <div className="lg:col-span-4 bg-emerald-950/20 border border-emerald-500/30 rounded-2xl p-4 flex flex-col justify-between space-y-3">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5 text-emerald-400" /> Siguiente Paso Recomendado
+                </span>
+                <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                  {aiAnalysis.coachTip}
+                </p>
+              </div>
+
+              {aiAnalysis.latestMetrics && (
+                <div className="pt-2 border-t border-emerald-500/20 flex items-center justify-between text-[10px] text-slate-400">
+                  <span>Último análisis: {formatDate(aiAnalysis.latestMetrics.logged_at)}</span>
+                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5" /> Estado Óptimo
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* DASHBOARD PRINCIPAL EN GRID DESKTOP (2 COLUMNAS EN LG+) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -1122,10 +1466,11 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
               </div>
             )}
           </div>
+        </div>
+      </div>
 
-
-          {/* 2. HISTORIAL DE MEDICIONES OPTIMIZADO (TABLA DESKTOP / TARJETAS RESPONSIVE) */}
-          <div className="space-y-4">
+      {/* ================= 2. HISTORIAL DE MEDICIONES OPTIMIZADO (A TODO LO ANCHO EN DESKTOP) ================= */}
+      <div className="w-full space-y-4 pt-2">
             {/* Header del Historial con Controles */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1">
               <div>
@@ -1483,8 +1828,6 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
               </div>
             )}
           </div>
-        </div>
-      </div>
 
       {/* MODAL DE EDICIÓN DE MEDICIÓN */}
       {editingMetric && (

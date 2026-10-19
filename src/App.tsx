@@ -1661,7 +1661,7 @@ function App() {
 
       {/* CUERPO PRINCIPAL */}
       <main className={`flex-1 px-4 py-6 mx-auto w-full transition-all duration-300 ${
-        view === 'progress' || view === 'history' ? 'max-w-7xl sm:px-6 lg:px-8' : 'max-w-xl'
+        view === 'progress' || view === 'history' ? 'max-w-[1750px] sm:px-6 lg:px-8 xl:px-10' : 'max-w-xl'
       }`}>
 
         {/* Banner de Entrenamiento Activo (si se navegó a otra vista) */}
