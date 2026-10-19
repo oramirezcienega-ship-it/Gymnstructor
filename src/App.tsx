@@ -4,6 +4,8 @@ import { db } from './db/db';
 import type { LocalRoutine, LocalExercise, LocalWorkoutLog } from './db/db';
 import { useSync } from './hooks/useSync';
 import { supabase } from './supabaseClient';
+import { ProgressView } from './components/ProgressView';
+import { WorkoutHistoryView } from './components/WorkoutHistoryView';
 import {
   Dumbbell,
   Plus,
@@ -25,9 +27,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Lock,
-  Scale,
   User,
   Camera,
+  Search,
+  Layers,
   Image as ImageIcon
 } from 'lucide-react';
 
@@ -38,6 +41,53 @@ const getExerciseImage = (name: string): string | null => {
   }
   if (norm.includes('sentadilla') || norm.includes('squat')) {
     return '/exercises/sentadilla.png';
+  }
+  return null;
+};
+
+const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): string => {
+  const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase();
+  if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('gluteo') || norm.includes('pantorrilla')) return 'Piernas';
+  if (norm.includes('empuje') || norm.includes('push') || norm.includes('pecho') || norm.includes('tricep') || norm.includes('trícep')) return 'Empuje / Pecho';
+  if (norm.includes('jalon') || norm.includes('jalón') || norm.includes('pull') || norm.includes('espalda') || norm.includes('bicep') || norm.includes('bícep')) return 'Jalón / Espalda';
+  if (norm.includes('hombro') || norm.includes('militar')) return 'Hombros';
+  if (norm.includes('full') || norm.includes('cuerpo')) return 'Full Body';
+  
+  if (rExercises.length > 0) {
+    const counts: Record<string, number> = {};
+    rExercises.forEach(e => {
+      const g = e.muscle_group || 'General';
+      counts[g] = (counts[g] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length > 0) return sorted[0][0];
+  }
+  return 'General';
+};
+
+const ACTIVE_WORKOUT_STORAGE_KEY = 'gymstructor_active_workout_session';
+
+interface SavedActiveWorkout {
+  userId?: string;
+  routine: LocalRoutine;
+  sessionLogs: {
+    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean; logId?: string; loggedAt?: string }[];
+  };
+  exercises: LocalExercise[];
+  startedAt?: string;
+  lastUpdated?: string;
+}
+
+const getSavedActiveWorkout = (): SavedActiveWorkout | null => {
+  try {
+    const raw = localStorage.getItem(ACTIVE_WORKOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.routine && parsed.sessionLogs && Array.isArray(parsed.exercises) && parsed.exercises.length > 0) {
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Error reading active workout from storage:', e);
   }
   return null;
 };
@@ -99,31 +149,6 @@ function App() {
     return `${day}/${month}/${year}`;
   };
 
-  // Función para formatear fechas cortas para gráficas (ej. "29 jul")
-  const formatShortDate = (dateValue: string | Date | undefined | null): string => {
-    if (!dateValue) return '';
-    let dayStr = '';
-    let monthIndex = -1;
-    const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-
-    if (typeof dateValue === 'string' && dateValue.includes('T')) {
-      const parts = dateValue.split('T')[0].split('-');
-      if (parts.length === 3) {
-        dayStr = parts[2];
-        monthIndex = parseInt(parts[1], 10) - 1;
-      }
-    }
-
-    if (monthIndex < 0 || monthIndex > 11) {
-      const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
-      if (isNaN(date.getTime())) return '';
-      dayStr = String(date.getDate());
-      monthIndex = date.getMonth();
-    }
-
-    return `${parseInt(dayStr, 10)} ${monthNames[monthIndex]}`;
-  };
-
   // Función para ordenar ejercicios respetando order_index
   const sortExercises = <T extends Partial<LocalExercise>>(list: T[]): T[] => {
     return list.slice().sort((a, b) => {
@@ -148,7 +173,9 @@ function App() {
     user?.email || null,
     user?.user_metadata?.name || null
   );
-  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress' | 'community'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress' | 'community'>(() => {
+    return getSavedActiveWorkout() ? 'workout' : 'dashboard';
+  });
 
   // Reactividad local mediante Dexie
   const routines = useLiveQuery(
@@ -188,26 +215,20 @@ function App() {
   const [routineDescription, setRoutineDescription] = useState('');
   const [routineExercises, setRoutineExercises] = useState<Partial<LocalExercise>[]>([]);
 
-  // Estados para el Entrenamiento en curso (Workout Session)
-  const [workoutRoutine, setWorkoutRoutine] = useState<LocalRoutine | null>(null);
+  // Estados para el Entrenamiento en curso (Workout Session) - Restaurados automáticamente si se recarga la pantalla
+  const [workoutRoutine, setWorkoutRoutine] = useState<LocalRoutine | null>(() => {
+    return getSavedActiveWorkout()?.routine || null;
+  });
   const [workoutSessionLogs, setWorkoutSessionLogs] = useState<{
-    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
-  }>({});
+    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean; logId?: string; loggedAt?: string }[];
+  }>(() => {
+    return getSavedActiveWorkout()?.sessionLogs || {};
+  });
 
   // Estado para expandir la imagen del ejercicio
   const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
 
-  // Estados para el registro de indicadores físicos en "Mi Progreso"
-  const [weightInput, setWeightInput] = useState<string>('');
-  const [bmiInput, setBmiInput] = useState<string>('');
-  const [fatInput, setFatInput] = useState<string>('');
-  const [muscleInput, setMuscleInput] = useState<string>('');
-  const [bmrInput, setBmrInput] = useState<string>('');
-  const [visceralFatInput, setVisceralFatInput] = useState<string>('');
-  const [bodyAgeInput, setBodyAgeInput] = useState<string>('');
-  const [metricDate, setMetricDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
-  const [hoveredMetricId, setHoveredMetricId] = useState<string | null>(null);
   
   // Inputs del perfil físico
   const [userHeight, setUserHeight] = useState<number>(0);
@@ -216,6 +237,10 @@ function App() {
 
   // Estado para expandir/colapsar plantillas de ejercicios en el Dashboard
   const [isTemplatesExpanded, setIsTemplatesExpanded] = useState<boolean>(false);
+
+  // Estados para búsqueda y filtrado de rutinas en Dashboard
+  const [routineSearchQuery, setRoutineSearchQuery] = useState<string>('');
+  const [routineMuscleFilter, setRoutineMuscleFilter] = useState<string>('Todas');
 
   // Helper para generar UUIDs locales (con fallback para contextos HTTP no seguros)
   const generateUUID = () => {
@@ -230,7 +255,53 @@ function App() {
   };
 
   // Estado local para los ejercicios en curso (permite reordenar dinámicamente)
-  const [workoutExercises, setWorkoutExercises] = useState<LocalExercise[]>([]);
+  const [workoutExercises, setWorkoutExercises] = useState<LocalExercise[]>(() => {
+    return getSavedActiveWorkout()?.exercises || [];
+  });
+
+  // Persistir en localStorage el estado del entrenamiento activo de forma reactiva
+  useEffect(() => {
+    if (workoutRoutine && workoutExercises.length > 0) {
+      const sessionData: SavedActiveWorkout = {
+        userId: currentUserId || undefined,
+        routine: workoutRoutine,
+        sessionLogs: workoutSessionLogs,
+        exercises: workoutExercises,
+        startedAt: getSavedActiveWorkout()?.startedAt || new Date().toISOString(),
+        lastUpdated: new Date().toISOString()
+      };
+      localStorage.setItem(ACTIVE_WORKOUT_STORAGE_KEY, JSON.stringify(sessionData));
+    }
+  }, [workoutRoutine, workoutSessionLogs, workoutExercises, currentUserId]);
+
+  // Si cambia de usuario autenticado y el entrenamiento guardado pertenece a otro usuario, limpiarlo
+  useEffect(() => {
+    if (!currentUserId) return;
+    const saved = getSavedActiveWorkout();
+    if (saved && saved.userId && saved.userId !== currentUserId) {
+      localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+      setWorkoutRoutine(null);
+      setWorkoutSessionLogs({});
+      setWorkoutExercises([]);
+      if (view === 'workout') setView('dashboard');
+    }
+  }, [currentUserId, view]);
+
+  // Advertir al usuario antes de recargar o cerrar pestaña si hay un entrenamiento activo
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (workoutRoutine) {
+        e.preventDefault();
+        e.returnValue = 'Tienes un entrenamiento activo en curso.';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [workoutRoutine]);
 
   // Compresión y conversión de imágenes para almacenamiento local ligero y sincronización
   const compressAndConvertToBase64 = (file: File): Promise<string> => {
@@ -500,6 +571,10 @@ function App() {
     setIsLoading(true);
     try {
       await supabase.auth.signOut();
+      localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+      setWorkoutRoutine(null);
+      setWorkoutSessionLogs({});
+      setWorkoutExercises([]);
       setIsAuthenticated(false);
       setUser(null);
       setView('dashboard');
@@ -723,75 +798,8 @@ function App() {
     if (isOnline) triggerSync();
   };
 
-  // Registrar una nueva medición histórica de peso / grasa / músculo
-  const handleSaveBodyMetric = async () => {
-    if (!currentUserId) return;
-    if (!weightInput || isNaN(Number(weightInput)) || Number(weightInput) <= 0) {
-      alert('Introduce un valor de peso válido (en kg).');
-      return;
-    }
-    
-    const now = new Date().toISOString();
-    const metricId = generateUUID();
-    
-    try {
-      const calculatedBmi = bmiInput
-        ? Number(bmiInput)
-        : userHeight > 0 && weightInput
-        ? Number((Number(weightInput) / ((userHeight / 100) * (userHeight / 100))).toFixed(1))
-        : undefined;
-
-      await db.body_metrics.add({
-        id: metricId,
-        user_id: currentUserId,
-        weight: Number(weightInput),
-        bmi: calculatedBmi,
-        body_fat: Number(fatInput) || 0,
-        muscle_mass: Number(muscleInput) || 0,
-        bmr: Number(bmrInput) || undefined,
-        body_age: Number(bodyAgeInput) || undefined,
-        visceral_fat: Number(visceralFatInput) || undefined,
-        logged_at: metricDate.includes('T') ? metricDate : new Date(`${metricDate}T12:00:00`).toISOString(),
-        deleted: 0,
-        created_at: now,
-        updated_at: now,
-        synced: 0
-      });
-      
-      setWeightInput('');
-      setBmiInput('');
-      setFatInput('');
-      setMuscleInput('');
-      setBmrInput('');
-      setVisceralFatInput('');
-      setBodyAgeInput('');
-      alert('Medición registrada con éxito.');
-    } catch (err) {
-      console.error(err);
-      alert('Error al registrar la medición.');
-    }
-    
-    if (isOnline) triggerSync();
-  };
-
-  // Eliminar medición histórica
-  const handleDeleteBodyMetric = async (id: string) => {
-    if (!confirm('¿Seguro que deseas eliminar esta medición?')) return;
-    const now = new Date().toISOString();
-    try {
-      await db.body_metrics.update(id, {
-        deleted: 1,
-        synced: 0,
-        updated_at: now
-      });
-    } catch (err) {
-      console.error(err);
-    }
-    if (isOnline) triggerSync();
-  };
-
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
-  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps') => {
+  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps' | 'EspaldaBiceps') => {
     const routineId = generateUUID();
     const now = new Date().toISOString();
 
@@ -837,6 +845,18 @@ function App() {
         { name: 'Fondos asistidos', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 70 },
         { name: 'Jalón cuerda sobre cabeza', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 42.5 }
       ];
+    } else if (type === 'EspaldaBiceps') {
+      name = 'Espalda y bíceps';
+      description = 'Rutina de tirón vertical, remos para espalda y flexión para bíceps.';
+      exercisesTemplate = [
+        { name: 'Jalón al pecho en polea', muscle_group: 'Espalda', series: 4, reps: 12, weight: 52 },
+        { name: 'Remo con mancuerna', muscle_group: 'Espalda', series: 3, reps: 12, weight: 35 },
+        { name: 'Remo en polea baja', muscle_group: 'Espalda', series: 3, reps: 12, weight: 40 },
+        { name: 'Máquina espalda baja', muscle_group: 'Espalda', series: 3, reps: 12, weight: 30 },
+        { name: 'Curl con barra', muscle_group: 'Bíceps', series: 3, reps: 12, weight: 30 },
+        { name: 'Curl martillo', muscle_group: 'Bíceps', series: 3, reps: 12, weight: 25 },
+        { name: 'Curl concentrado', muscle_group: 'Bíceps', series: 2, reps: 12, weight: 20 }
+      ];
     } else {
       name = 'Cuerpo Completo (Full Body)';
       description = 'Rutina general para todo el cuerpo.';
@@ -860,6 +880,7 @@ function App() {
       synced: 0
     });
 
+    let order = 0;
     for (const ex of exercisesTemplate) {
       await db.exercises.add({
         id: generateUUID(),
@@ -869,6 +890,7 @@ function App() {
         series: ex.series,
         reps: ex.reps,
         weight: ex.weight,
+        order_index: order++,
         deleted: 0,
         created_at: now,
         updated_at: now,
@@ -880,6 +902,31 @@ function App() {
       triggerSync();
     }
   };
+
+  // Autocarga de las rutinas solicitadas ("Espalda y bíceps" y "Pecho y tríceps") si aún no existen
+  useEffect(() => {
+    if (!currentUserId || !routines) return;
+
+    // 1. Espalda y bíceps
+    const hasBackBiceps = routines.some(r =>
+      r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps'))
+    );
+    const keyBack = `auto_loaded_espalda_biceps_${currentUserId}`;
+    if (!hasBackBiceps && !localStorage.getItem(keyBack)) {
+      localStorage.setItem(keyBack, 'true');
+      generateTemplateRoutine('EspaldaBiceps');
+    }
+
+    // 2. Pecho y tríceps
+    const hasChestTriceps = routines.some(r =>
+      r.name.toLowerCase().includes('pecho') && (r.name.toLowerCase().includes('tríceps') || r.name.toLowerCase().includes('triceps'))
+    );
+    const keyChest = `auto_loaded_pecho_triceps_${currentUserId}`;
+    if (!hasChestTriceps && !localStorage.getItem(keyChest)) {
+      localStorage.setItem(keyChest, 'true');
+      generateTemplateRoutine('PechoTriceps');
+    }
+  }, [currentUserId, routines]);
 
   // --- CRUD ACCIONES ---
   const handleOpenCreateRoutine = () => {
@@ -1033,6 +1080,11 @@ function App() {
 
   // --- ENTRENAMIENTO ACTIVO ---
   const handleStartWorkout = async (routine: LocalRoutine) => {
+    if (workoutRoutine && workoutRoutine.id !== routine.id) {
+      if (!confirm(`Tienes un entrenamiento en curso ("${workoutRoutine.name}"). ¿Deseas descartarlo e iniciar "${routine.name}"?`)) {
+        return;
+      }
+    }
     setWorkoutRoutine(routine);
     const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     
@@ -1071,29 +1123,108 @@ function App() {
     setView('workout');
   };
 
-  const handleToggleWorkoutSeries = (exerciseId: string, seriesIndex: number) => {
+  const handleToggleWorkoutSeries = async (exerciseId: string, seriesIndex: number) => {
     const copy = { ...workoutSessionLogs };
-    const series = copy[exerciseId][seriesIndex];
-    series.completed = !series.completed;
+    const list = copy[exerciseId] ? [...copy[exerciseId]] : [];
+    if (!list[seriesIndex]) return;
+
+    const series = { ...list[seriesIndex] };
+    const willBeCompleted = !series.completed;
+    series.completed = willBeCompleted;
+
+    const now = new Date().toISOString();
+
+    if (willBeCompleted) {
+      // Asignar logId y timestamp si no existen
+      const logId = series.logId || generateUUID();
+      const loggedAt = series.loggedAt || now;
+      series.logId = logId;
+      series.loggedAt = loggedAt;
+
+      // Registrar inmediatamente el avance de la serie en la base de datos (db.workout_logs)
+      const logData: LocalWorkoutLog = {
+        id: logId,
+        exercise_id: exerciseId,
+        weight_lifted: Number(series.weight) || 0,
+        reps_done: Number(series.reps) || 0,
+        logged_at: loggedAt,
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      };
+      await db.workout_logs.put(logData);
+
+      // Progresión de carga: actualizar peso y reps sugeridas en el ejercicio para futuras sesiones
+      if (Number(series.weight) > 0) {
+        await db.exercises.update(exerciseId, {
+          weight: Number(series.weight),
+          reps: Number(series.reps),
+          updated_at: now,
+          synced: 0
+        });
+      }
+
+      // Sincronización en segundo plano con Supabase si estamos online
+      if (isOnline) {
+        triggerSync();
+      }
+    } else {
+      // Si el usuario desmarca la serie, marcar como borrado en db.workout_logs
+      if (series.logId) {
+        await db.workout_logs.update(series.logId, {
+          deleted: 1,
+          updated_at: now,
+          synced: 0
+        });
+        if (isOnline) {
+          triggerSync();
+        }
+      }
+    }
+
+    list[seriesIndex] = series;
+    copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
   };
 
-  const handleWorkoutValueChange = (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
+  const handleWorkoutValueChange = async (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
     const copy = { ...workoutSessionLogs };
-    copy[exerciseId][seriesIndex][field] = value;
+    const list = copy[exerciseId] ? [...copy[exerciseId]] : [];
+    if (!list[seriesIndex]) return;
+
+    const series = { ...list[seriesIndex] };
+    series[field] = value;
+    list[seriesIndex] = series;
+    copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
+
+    // Si la serie ya estaba completada y registrada en BD, actualizar el log inmediatamente
+    if (series.completed && series.logId) {
+      const now = new Date().toISOString();
+      const numVal = field === 'weight' ? (parseFloat(value) || 0) : (parseInt(value) || 0);
+      await db.workout_logs.update(series.logId, {
+        [field === 'weight' ? 'weight_lifted' : 'reps_done']: numVal,
+        updated_at: now,
+        synced: 0
+      });
+      if (isOnline) {
+        triggerSync();
+      }
+    }
   };
 
   const handlePropagateSeriesValue = (exerciseId: string, fromSeriesIndex: number, field: 'weight' | 'reps', value: number) => {
     const copy = { ...workoutSessionLogs };
-    const list = copy[exerciseId];
+    const list = copy[exerciseId] ? [...copy[exerciseId]] : [];
     if (!list) return;
 
     for (let i = fromSeriesIndex + 1; i < list.length; i++) {
       if (!list[i].completed) {
-        list[i][field] = value;
+        list[i] = { ...list[i], [field]: value };
       }
     }
+    copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
   };
 
@@ -1103,7 +1234,7 @@ function App() {
 
     let logsAdded = 0;
 
-    // Registrar logs de series completadas y actualizar peso de ejercicio para siguientes sesiones
+    // Asegurar que todas las series completadas estén en db.workout_logs y actualizar peso de ejercicio
     for (const exerciseId of Object.keys(workoutSessionLogs)) {
       const seriesList = workoutSessionLogs[exerciseId];
       let maxWeightUsed = 0;
@@ -1113,19 +1244,19 @@ function App() {
       const completedSeries = seriesList.filter(s => s.completed);
       
       for (const s of completedSeries) {
-        const logId = generateUUID();
+        const logId = s.logId || generateUUID();
         const logData: LocalWorkoutLog = {
           id: logId,
           exercise_id: exerciseId,
-          weight_lifted: s.weight,
-          reps_done: s.reps,
-          logged_at: now,
+          weight_lifted: Number(s.weight) || 0,
+          reps_done: Number(s.reps) || 0,
+          logged_at: s.loggedAt || now,
           deleted: 0,
           created_at: now,
           updated_at: now,
           synced: 0
         };
-        await db.workout_logs.add(logData);
+        await db.workout_logs.put(logData);
         logsAdded++;
 
         if (s.weight > maxWeightUsed) {
@@ -1155,12 +1286,14 @@ function App() {
     }
 
     if (logsAdded === 0) {
-      alert('Registra al menos una serie completa para guardar el entrenamiento.');
+      alert('Registra al menos una serie completada para guardar el entrenamiento.');
       return;
     }
 
+    localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
     setWorkoutRoutine(null);
     setWorkoutSessionLogs({});
+    setWorkoutExercises([]);
     setView('dashboard');
     if (isOnline) {
       triggerSync();
@@ -1427,7 +1560,7 @@ function App() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen pb-16 bg-slate-950">
+    <div className="flex flex-col min-h-screen pb-16 md:pb-8 bg-slate-950">
       {/* HEADER / BARRA DE CONEXIÓN */}
       <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -1439,6 +1572,60 @@ function App() {
             <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Offline-First App</span>
           </div>
         </div>
+
+        {/* Navegación Desktop */}
+        {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
+          <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
+            <button
+              onClick={() => setView('dashboard')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                view === 'dashboard'
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Dumbbell className="w-4 h-4" /> Rutinas
+            </button>
+            <button
+              onClick={() => setView('progress')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                view === 'progress'
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4" /> Progreso
+            </button>
+            <button
+              onClick={() => setView('community')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                view === 'community'
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" /> Comunidad
+            </button>
+            <button
+              onClick={() => setView('history')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                view === 'history'
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Calendar className="w-4 h-4" /> Historial
+            </button>
+            {workoutRoutine && (
+              <button
+                onClick={() => setView('workout')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse shadow-sm"
+              >
+                <TrendingUp className="w-4 h-4" /> En Curso
+              </button>
+            )}
+          </nav>
+        )}
 
         {/* Estatus e Interacción de Sincronización */}
         <div className="flex items-center gap-2">
@@ -1499,156 +1686,462 @@ function App() {
       )}
 
       {/* CUERPO PRINCIPAL */}
-      <main className="flex-1 px-4 py-4 max-w-xl mx-auto w-full">
+      <main className={`flex-1 px-4 py-6 mx-auto w-full transition-all duration-300 ${
+        view === 'workout'
+          ? 'max-w-5xl sm:px-6 lg:px-8'
+          : view === 'edit_routine'
+          ? 'max-w-4xl sm:px-6 lg:px-8'
+          : 'max-w-[1750px] sm:px-6 lg:px-8 xl:px-10'
+      }`}>
 
-        {/* 1. DASHBOARD VIEW */}
-        {view === 'dashboard' && (
-          <div className="space-y-6">
-            
-            {/* Tarjeta de Progreso rápido */}
-            <div className="glass-card rounded-3xl p-5 relative overflow-hidden">
-              <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 pointer-events-none">
-                <Dumbbell className="w-40 h-40" />
-              </div>
-              <h2 className="text-xl font-extrabold text-white mb-1 flex items-center gap-1.5">
-                <Sparkles className="w-5 h-5 text-emerald-400" /> ¡Hola, {profile?.name || 'Atleta'}!
-              </h2>
-              <p className="text-slate-400 text-sm mb-4">
-                Elige una de tus rutinas o genera plantillas prediseñadas instantáneamente.
-              </p>
+        {/* Banner de Entrenamiento Activo (si se navegó a otra vista) */}
+        {workoutRoutine && view !== 'workout' && (() => {
+          const allSeries = Object.values(workoutSessionLogs).flat();
+          const completedCount = allSeries.filter(s => s.completed).length;
+          const totalCount = allSeries.length;
+          const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-              {/* Botón de Nueva Rutina */}
-              <button
-                onClick={handleOpenCreateRoutine}
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer"
-              >
-                <Plus className="w-5 h-5" /> Crear Nueva Rutina
-              </button>
-            </div>
+          return (
+            <div className="mb-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
+              <div className="absolute right-0 top-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none"></div>
 
-            {/* Generador de Plantillas Rápidas */}
-            <div className="space-y-2.5">
-              <button
-                onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
-                className="w-full flex items-center justify-between text-xs font-bold text-slate-450 uppercase tracking-widest px-1 py-1 hover:text-white transition-colors cursor-pointer"
-              >
-                <span>Generador de Plantillas</span>
-                {isTemplatesExpanded ? <ChevronUp className="w-4 h-4 text-slate-450" /> : <ChevronDown className="w-4 h-4 text-slate-450" />}
-              </button>
-              
-              {isTemplatesExpanded && (
-                <div className="grid grid-cols-2 gap-2">
-                  {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps'] as const).map(type => (
-                    <button
-                      key={type}
-                      onClick={() => generateTemplateRoutine(type)}
-                      className="glass-card hover:bg-slate-900/60 p-3 rounded-2xl text-left border border-slate-900 transition-all flex items-center justify-between cursor-pointer"
-                    >
-                      <div>
-                        <p className="text-sm font-semibold text-white">
-                          {type === 'Fullbody' ? 'Full Body' : type === 'PechoTriceps' ? 'Pecho & Tríceps' : type}
-                        </p>
-                        <p className="text-[10px] text-slate-400">Autogenerar ejercicios</p>
-                      </div>
-                      <Sparkles className="w-4 h-4 text-emerald-400/80" />
-                    </button>
-                  ))}
+              <div className="flex items-center gap-3.5 min-w-0 relative z-10">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/10">
+                  <TrendingUp className="w-6 h-6 text-emerald-400 animate-pulse" />
                 </div>
-              )}
-            </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-md border border-emerald-500/30">
+                      Entrenamiento Activo
+                    </span>
+                    <span className="text-xs text-slate-300 font-semibold">
+                      {completedCount} de {totalCount} series completadas ({pct}%)
+                    </span>
+                  </div>
+                  <h4 className="text-base sm:text-lg font-extrabold text-white truncate mt-1">
+                    {workoutRoutine.name}
+                  </h4>
+                  {/* Barra de progreso rápida */}
+                  <div className="w-48 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
 
-            {/* Listado de Rutinas */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Mis Rutinas ({routines?.length || 0})</h3>
-                <button 
-                  onClick={() => setView('history')} 
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+              <div className="flex items-center gap-2 relative z-10 shrink-0">
+                <button
+                  onClick={() => setView('workout')}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-[1.02]"
                 >
-                  <Calendar className="w-3.5 h-3.5" /> Historial
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Reanudar Entrenamiento</span>
                 </button>
               </div>
+            </div>
+          );
+        })()}
 
-              {routines && routines.length > 0 ? (
-                <div className="space-y-3">
-                  {routines.map(routine => {
-                    const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
-                    return (
-                      <div 
-                        key={routine.id} 
-                        className="glass-card rounded-2xl p-4 border border-slate-900 hover:border-slate-800 transition-all flex flex-col justify-between"
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-bold text-white text-base leading-snug">{routine.name}</h4>
-                            <p className="text-slate-400 text-xs mt-0.5 line-clamp-2">{routine.description || 'Sin descripción.'}</p>
-                          </div>
-                          
-                          {/* Sync indicator individual */}
-                          {routine.synced === 0 && (
-                            <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0">
-                              Pendiente
-                            </span>
-                          )}
-                        </div>
+        {/* 1. DASHBOARD VIEW */}
+        {view === 'dashboard' && (() => {
+          // Filtrado de rutinas por búsqueda y músculo seleccionado
+          const filteredRoutines = (routines || []).filter(routine => {
+            const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
+            const category = getRoutineCategory(routine, rExercises);
 
-                        {/* Detalle de ejercicios */}
-                        <div className="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
-                          {rExercises.slice(0, 3).map((ex) => (
-                            <span key={ex.id} className="flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-lg border border-slate-800/40">
-                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
-                              {ex.name}
-                            </span>
-                          ))}
-                          {rExercises.length > 3 && (
-                            <span className="text-[10px] text-slate-500 self-center">+{rExercises.length - 3} más</span>
-                          )}
-                        </div>
+            // Filtro por Músculo / Categoría
+            if (routineMuscleFilter !== 'Todas') {
+              const filterLower = routineMuscleFilter.toLowerCase();
+              const catLower = category.toLowerCase();
+              const nameLower = routine.name.toLowerCase();
+              const hasMuscleInExercises = rExercises.some(e => (e.muscle_group || '').toLowerCase().includes(filterLower));
+              
+              const matchesFilter = catLower.includes(filterLower) || nameLower.includes(filterLower) || hasMuscleInExercises;
+              if (!matchesFilter) return false;
+            }
 
-                        {/* Botones de acción */}
-                        <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-slate-900/80 flex-wrap">
-                          <button
-                            onClick={() => handleStartWorkout(routine)}
-                            className="flex-1 min-w-[70px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 py-2 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
-                          >
-                            <Play className="w-3.5 h-3.5 fill-current" /> Iniciar
-                          </button>
-                          <button
-                            onClick={() => handleOpenEditRoutine(routine)}
-                            className="bg-slate-900 hover:bg-slate-800 text-slate-300 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 cursor-pointer"
-                          >
-                            <Edit className="w-3.5 h-3.5" /> Editar
-                          </button>
-                          {isOnline && (
-                            <button
-                              onClick={() => handleShareRoutine(routine)}
-                              className="bg-slate-900 hover:bg-emerald-950/30 text-slate-300 hover:text-emerald-400 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-emerald-500/20 cursor-pointer"
-                              title="Compartir en la comunidad"
-                            >
-                              <Sparkles className="w-3.5 h-3.5" /> Compartir
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDeleteRoutine(routine.id)}
-                            className="bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center transition-all border border-slate-800 hover:border-rose-500/20 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+            // Filtro por Búsqueda (nombre, descripción, o nombres de ejercicios)
+            if (routineSearchQuery.trim()) {
+              const query = routineSearchQuery.toLowerCase().trim();
+              const matchesName = routine.name.toLowerCase().includes(query);
+              const matchesDesc = (routine.description || '').toLowerCase().includes(query);
+              const matchesEx = rExercises.some(e => e.name.toLowerCase().includes(query) || (e.muscle_group || '').toLowerCase().includes(query));
+              if (!matchesName && !matchesDesc && !matchesEx) return false;
+            }
+
+            return true;
+          });
+
+          return (
+            <div className="space-y-6">
+              
+              {/* Hero / Bienvenida y Estadísticas Rápidas en Desktop */}
+              <div className="glass-card rounded-3xl p-5 sm:p-7 relative overflow-hidden border border-slate-900 bg-gradient-to-br from-slate-900/90 via-slate-900/50 to-emerald-950/20 shadow-2xl">
+                <div className="absolute right-0 bottom-0 translate-x-12 translate-y-12 opacity-5 pointer-events-none">
+                  <Dumbbell className="w-80 h-80 text-emerald-400" />
+                </div>
+
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                  <div className="space-y-3 max-w-3xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold tracking-wide">
+                      <Sparkles className="w-3.5 h-3.5" /> Atleta Pro • Offline-First
+                    </div>
+                    
+                    <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
+                      ¡Hola, {profile?.name || 'Atleta'}!
+                    </h2>
+                    
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                      Elige una de tus rutinas para entrenar hoy, crea una personalizada o genera plantillas basadas en evidencia científica en un solo clic.
+                    </p>
+
+                    {/* KPI Cards Strip */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 pt-2">
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Dumbbell className="w-3 h-3 text-emerald-400" /> Mis Rutinas
+                        </p>
+                        <p className="text-xl font-extrabold text-white mt-1">{routines?.length || 0}</p>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-emerald-400" /> Ejercicios
+                        </p>
+                        <p className="text-xl font-extrabold text-emerald-400 mt-1">{userExercises.length || 0}</p>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-emerald-400" /> Sesiones
+                        </p>
+                        <p className="text-xl font-extrabold text-white mt-1">
+                          {new Set((userWorkoutLogs || []).map(l => l.logged_at ? l.logged_at.split('T')[0] : '')).size}
+                        </p>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Cloud className="w-3 h-3 text-emerald-400" /> Estado
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+                          <span className="text-xs font-bold text-slate-200">{isOnline ? 'Online Sync' : 'Offline'}</span>
                         </div>
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
+
+                  {/* Acciones Rápidas Hero */}
+                  <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0 lg:w-72">
+                    <button
+                      onClick={handleOpenCreateRoutine}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-xl shadow-emerald-500/20 cursor-pointer text-sm hover:scale-[1.02]"
+                    >
+                      <Plus className="w-5 h-5 stroke-[3]" /> Crear Nueva Rutina
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setView('history')}
+                        className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Calendar className="w-4 h-4 text-emerald-400" /> Historial
+                      </button>
+                      <button
+                        onClick={() => setView('progress')}
+                        className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <TrendingUp className="w-4 h-4 text-emerald-400" /> Progreso
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <div className="glass-card rounded-3xl p-8 border border-slate-900 text-center">
-                  <Dumbbell className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                  <p className="text-sm text-slate-400">No tienes rutinas registradas.</p>
-                  <p className="text-xs text-slate-500 mt-1">Usa las plantillas rápidas de arriba o crea una desde cero.</p>
+              </div>
+
+              {/* Generador de Plantillas Rápidas */}
+              <div className="glass-card rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-900 bg-slate-900/40">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider">
+                        Generador de Plantillas Rápidas
+                      </h3>
+                      <p className="text-[11px] text-slate-400 hidden sm:block">
+                        Añade rutinas pre-diseñadas basadas en los patrones de entrenamiento más efectivos
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-slate-950/70 border border-slate-800/80 hover:border-emerald-500/30 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                  >
+                    <span>{isTemplatesExpanded ? 'Ocultar' : 'Ver Plantillas'}</span>
+                    {isTemplatesExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
                 </div>
-              )}
+
+                {isTemplatesExpanded && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 mt-4 pt-4 border-t border-slate-900/80 animate-fade-in">
+                    {[
+                      { type: 'Push' as const, label: 'Push (Empuje)', sub: 'Pecho, Hombro, Tríceps', badge: 'Empuje' },
+                      { type: 'Pull' as const, label: 'Pull (Jalón)', sub: 'Espalda, Bíceps, Trapecio', badge: 'Tirón' },
+                      { type: 'Legs' as const, label: 'Legs (Pierna)', sub: 'Cuádriceps, Isquios, Gemelos', badge: 'Pierna' },
+                      { type: 'Fullbody' as const, label: 'Full Body', sub: 'Cuerpo completo balanceado', badge: 'Global' },
+                      { type: 'PechoTriceps' as const, label: 'Pecho & Tríceps', sub: 'Empuje plano, inclinado y tríceps', badge: 'Empuje' },
+                      { type: 'EspaldaBiceps' as const, label: 'Espalda & Bíceps', sub: 'Jalón vertical, remos y curl', badge: 'Tirón' }
+                    ].map(item => (
+                      <button
+                        key={item.type}
+                        onClick={() => generateTemplateRoutine(item.type)}
+                        className="glass-card hover:bg-slate-900/90 p-3 sm:p-3.5 rounded-2xl text-left border border-slate-800/80 hover:border-emerald-500/40 transition-all flex flex-col justify-between group cursor-pointer hover:-translate-y-0.5 hover:shadow-lg hover:shadow-emerald-500/5"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              {item.badge}
+                            </span>
+                            <Sparkles className="w-3.5 h-3.5 text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                          </div>
+                          <p className="text-xs sm:text-sm font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
+                            {item.label}
+                          </p>
+                          <p className="text-[10px] text-slate-400 line-clamp-1 mt-1">
+                            {item.sub}
+                          </p>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-slate-900 flex items-center justify-between text-[10px] text-emerald-400 font-semibold group-hover:underline">
+                          <span>Generar</span>
+                          <span>+</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Listado de Rutinas con Barra de Búsqueda y Filtros en Desktop */}
+              <div className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs sm:text-sm font-extrabold text-slate-300 uppercase tracking-widest flex items-center gap-2">
+                      <span>Mis Rutinas</span>
+                      <span className="bg-slate-800/80 text-emerald-400 px-2.5 py-0.5 rounded-full text-xs font-black border border-slate-700">
+                        {filteredRoutines.length}
+                      </span>
+                    </h3>
+                  </div>
+
+                  {/* Buscador de Rutinas */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-full sm:w-64 md:w-80">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Buscar por rutina o ejercicio..."
+                        value={routineSearchQuery}
+                        onChange={e => setRoutineSearchQuery(e.target.value)}
+                        className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition-colors"
+                      />
+                      {routineSearchQuery && (
+                        <button
+                          onClick={() => setRoutineSearchQuery('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filtros de Músculo / Enfoque */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+                  {['Todas', 'Piernas', 'Empuje', 'Jalón', 'Pecho', 'Espalda', 'Hombros'].map(category => (
+                    <button
+                      key={category}
+                      onClick={() => setRoutineMuscleFilter(category)}
+                      className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer ${
+                        routineMuscleFilter === category
+                          ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                          : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {category}
+                    </button>
+                  ))}
+                  {(routineMuscleFilter !== 'Todas' || routineSearchQuery) && (
+                    <button
+                      onClick={() => {
+                        setRoutineMuscleFilter('Todas');
+                        setRoutineSearchQuery('');
+                      }}
+                      className="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 underline cursor-pointer whitespace-nowrap ml-1"
+                    >
+                      Restablecer
+                    </button>
+                  )}
+                </div>
+
+                {/* Grid Responsivo Multi-Columna de Rutinas */}
+                {filteredRoutines && filteredRoutines.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
+                    {filteredRoutines.map(routine => {
+                      const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
+                      const detectedCategory = getRoutineCategory(routine, rExercises);
+
+                      return (
+                        <div 
+                          key={routine.id} 
+                          className="glass-card rounded-3xl p-5 border border-slate-900 hover:border-emerald-500/40 transition-all duration-300 flex flex-col justify-between group hover:shadow-2xl hover:shadow-emerald-500/5 hover:-translate-y-1 relative"
+                        >
+                          <div>
+                            {/* Card Header: Category Chip & Status */}
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                                  {detectedCategory}
+                                </span>
+                                <span className="text-[10px] font-medium text-slate-400 bg-slate-900/80 px-2 py-1 rounded-lg border border-slate-800">
+                                  {rExercises.length} {rExercises.length === 1 ? 'ejercicio' : 'ejercicios'}
+                                </span>
+                              </div>
+
+                              {routine.synced === 0 ? (
+                                <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase shrink-0">
+                                  Pendiente
+                                </span>
+                              ) : (
+                                <span className="w-2 h-2 rounded-full bg-emerald-500/40 shrink-0" title="Sincronizada"></span>
+                              )}
+                            </div>
+
+                            {/* Routine Title & Description */}
+                            <h4 className="font-extrabold text-white text-base sm:text-lg leading-snug group-hover:text-emerald-300 transition-colors">
+                              {routine.name}
+                            </h4>
+                            <p className="text-slate-400 text-xs mt-1.5 line-clamp-2 min-h-[2rem]">
+                              {routine.description || 'Rutina sin notas adicionales.'}
+                            </p>
+
+                            {/* Detalle de Ejercicios */}
+                            <div className="mt-4 pt-3 border-t border-slate-900/80 space-y-2">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                Ejercicios incluidos:
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {rExercises.slice(0, 4).map((ex) => (
+                                  <span 
+                                    key={ex.id} 
+                                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-300 bg-slate-950/70 border border-slate-800/80 px-2 py-1 rounded-lg"
+                                  >
+                                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0"></span>
+                                    <span className="truncate max-w-[130px]">{ex.name}</span>
+                                  </span>
+                                ))}
+                                {rExercises.length > 4 && (
+                                  <span className="inline-flex items-center text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg">
+                                    +{rExercises.length - 4} más
+                                  </span>
+                                )}
+                                {rExercises.length === 0 && (
+                                  <span className="text-[11px] text-slate-500 italic">Sin ejercicios configurados aún</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Botones de Acción */}
+                          <div className="mt-5 pt-3 border-t border-slate-900/80 space-y-2">
+                            <button
+                              onClick={() => handleStartWorkout(routine)}
+                              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md shadow-emerald-500/10 cursor-pointer hover:shadow-emerald-500/25"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" /> Iniciar Entrenamiento
+                            </button>
+
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <button
+                                onClick={() => handleOpenEditRoutine(routine)}
+                                className="bg-slate-900 hover:bg-slate-800 text-slate-300 py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 cursor-pointer"
+                                title="Editar rutina"
+                              >
+                                <Edit className="w-3.5 h-3.5" /> Editar
+                              </button>
+
+                              {isOnline ? (
+                                <button
+                                  onClick={() => handleShareRoutine(routine)}
+                                  className="bg-slate-900 hover:bg-emerald-950/30 text-slate-300 hover:text-emerald-400 py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-emerald-500/20 cursor-pointer"
+                                  title="Compartir en la comunidad"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5" /> Compartir
+                                </button>
+                              ) : (
+                                <div className="bg-slate-950/40 border border-slate-900 rounded-xl py-1.5 px-2 flex items-center justify-center text-slate-600 text-[10px] cursor-not-allowed" title="Conéctate para compartir">
+                                  Offline
+                                </div>
+                              )}
+
+                              <button
+                                onClick={() => handleDeleteRoutine(routine.id)}
+                                className="bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-rose-500/20 cursor-pointer"
+                                title="Eliminar rutina"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : routines && routines.length > 0 ? (
+                  /* Estado cuando hay rutinas pero no coinciden con los filtros */
+                  <div className="glass-card rounded-3xl p-10 border border-slate-900 text-center space-y-3">
+                    <Search className="w-10 h-10 text-slate-600 mx-auto" />
+                    <p className="text-base font-bold text-white">No se encontraron rutinas coincidentes</p>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      No hay resultados para "{routineSearchQuery || routineMuscleFilter}". Prueba cambiando el término o restableciendo los filtros.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setRoutineMuscleFilter('Todas');
+                        setRoutineSearchQuery('');
+                      }}
+                      className="bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold px-4 py-2 rounded-xl text-xs border border-slate-800 cursor-pointer inline-flex items-center gap-1.5 mt-2"
+                    >
+                      Restablecer filtros
+                    </button>
+                  </div>
+                ) : (
+                  /* Estado sin ninguna rutina creada */
+                  <div className="glass-card rounded-3xl p-10 border border-slate-900 text-center space-y-3">
+                    <div className="w-14 h-14 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
+                      <Dumbbell className="w-7 h-7" />
+                    </div>
+                    <h4 className="text-base font-bold text-white">No tienes rutinas registradas</h4>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      Usa las plantillas rápidas prediseñadas arriba para autogenerar una rutina en 1 clic, o crea una desde cero.
+                    </p>
+                    <button
+                      onClick={handleOpenCreateRoutine}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-500/10"
+                    >
+                      <Plus className="w-4 h-4 stroke-[3]" /> Crear mi primera rutina
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* 2. CREAR / EDITAR RUTINA VIEW */}
         {view === 'edit_routine' && (
@@ -1901,22 +2394,54 @@ function App() {
           <div className="space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setView('dashboard')}
+                  className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer mr-1"
+                  title="Pausar y volver al menú principal"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
                 <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
                   <TrendingUp className="w-5 h-5 text-emerald-400 animate-pulse" /> Entrenamiento Activo
                 </h2>
               </div>
-              <button
-                onClick={() => {
-                  if (confirm('¿Deseas cancelar el entrenamiento actual? No se guardará el historial.')) {
-                    setWorkoutRoutine(null);
-                    setWorkoutSessionLogs({});
-                    setView('dashboard');
-                  }
-                }}
-                className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-              >
-                Cancelar
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setView('dashboard')}
+                  className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
+                  title="Pausar temporalmente"
+                >
+                  Pausar
+                </button>
+                <button
+                  onClick={() => {
+                    const hasCompleted = Object.values(workoutSessionLogs).flat().some(s => s.completed);
+                    if (hasCompleted) {
+                      if (confirm('¿Deseas salir del entrenamiento actual?\n\nLas series que ya completaste quedarán guardadas en tu historial.')) {
+                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+                        setWorkoutRoutine(null);
+                        setWorkoutSessionLogs({});
+                        setWorkoutExercises([]);
+                        setView('dashboard');
+                        if (isOnline) triggerSync();
+                      }
+                    } else {
+                      if (confirm('¿Deseas cancelar el entrenamiento actual?')) {
+                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+                        setWorkoutRoutine(null);
+                        setWorkoutSessionLogs({});
+                        setWorkoutExercises([]);
+                        setView('dashboard');
+                      }
+                    }
+                  }}
+                  className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
+                >
+                  Salir
+                </button>
+              </div>
             </div>
 
             <div className="bg-slate-900/40 rounded-2xl p-4 border border-slate-900/60">
@@ -2125,606 +2650,34 @@ function App() {
 
         {/* 4. HISTORIAL VIEW */}
         {view === 'history' && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setView('dashboard')} 
-                className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-              <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
-                <Calendar className="w-5 h-5 text-emerald-400" /> Historial de Entrenamientos
-              </h2>
-            </div>
-
-            {userWorkoutLogs && userWorkoutLogs.length > 0 ? (
-              <div className="space-y-4">
-                {/* Agrupar logs por día */}
-                {Array.from(new Set(userWorkoutLogs.map(log => formatDate(log.logged_at)))).reverse().map(dateString => {
-                  const dateLogs = userWorkoutLogs.filter(log => formatDate(log.logged_at) === dateString);
-                  
-                  return (
-                    <div key={dateString} className="glass-card rounded-2xl p-4 border border-slate-900 space-y-3">
-                      {/* Fecha cabecera */}
-                      <div className="flex justify-between items-center pb-2 border-b border-slate-900">
-                        <span className="font-bold text-white text-sm">{dateString}</span>
-                        <span className="text-[10px] text-slate-400 font-semibold bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
-                          {dateLogs.length} series registradas
-                        </span>
-                      </div>
-
-                      {/* Lista de series del día */}
-                      <div className="space-y-2">
-                        {dateLogs.map(log => {
-                          const associatedExercise = exercises?.find(ex => ex.id === log.exercise_id);
-                          return (
-                            <div key={log.id} className="flex justify-between items-center text-xs">
-                              <div>
-                                <span className="font-semibold text-slate-300">
-                                  {associatedExercise ? associatedExercise.name : 'Ejercicio Eliminado'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-slate-400 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-900/60">
-                                  {log.weight_lifted} lb
-                                </span>
-                                <span className="text-slate-500 font-medium">
-                                  {log.reps_done} reps
-                                </span>
-                                {log.synced === 0 && (
-                                  <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" title="Sincronización pendiente"></span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="glass-card rounded-3xl p-8 border border-slate-900 text-center">
-                <Calendar className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                <p className="text-sm text-slate-400">No hay entrenamientos completados aún.</p>
-                <p className="text-xs text-slate-500 mt-1">Completa una rutina en el Dashboard para ver tus registros aquí.</p>
-              </div>
-            )}
-          </div>
+          <WorkoutHistoryView
+            workoutLogs={userWorkoutLogs}
+            exercises={exercises}
+            routines={routines}
+            onBack={() => setView('dashboard')}
+            onStartWorkoutWithRoutine={handleStartWorkout}
+            triggerSync={triggerSync}
+            isOnline={isOnline}
+          />
         )}
 
         {/* 5. MI PROGRESO VIEW */}
         {view === 'progress' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
-                <TrendingUp className="w-5 h-5 text-emerald-400" /> Mi Progreso Físico
-              </h2>
-              {/* Botón Cerrar Sesión */}
-              <button
-                onClick={handleSignOut}
-                className="text-[10px] text-slate-400 hover:text-rose-400 font-medium bg-slate-900 border border-slate-800 hover:border-rose-500/20 px-2.5 py-1 rounded-lg transition-all cursor-pointer"
-              >
-                Cerrar Sesión
-              </button>
-            </div>
-
-            {/* Ficha General de Perfil Físico */}
-            <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 flex items-center gap-1">
-                <User className="w-3.5 h-3.5 text-emerald-400" /> Datos Generales
-              </h3>
-              
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Altura (cm)</label>
-                  <input
-                    type="number"
-                    value={userHeight || ''}
-                    onChange={e => setUserHeight(Number(e.target.value) || 0)}
-                    placeholder="Ej: 175"
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Sexo Biológico</label>
-                  <select
-                    value={userGender}
-                    onChange={e => setUserGender(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-emerald-500/50"
-                  >
-                    <option value="">Selecciona</option>
-                    <option value="Masculino">Masculino</option>
-                    <option value="Femenino">Femenino</option>
-                    <option value="Otro">Otro</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nacimiento</label>
-                  <input
-                    type="date"
-                    value={userBirthDate}
-                    onChange={e => setUserBirthDate(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] text-white focus:outline-none focus:border-emerald-500/50 text-center"
-                  />
-                </div>
-              </div>
-
-              <button
-                onClick={handleSavePhysicalProfile}
-                disabled={isSavingProfile}
-                className="w-full bg-slate-900 hover:bg-slate-855 text-slate-200 border border-slate-800 hover:border-emerald-500/30 text-xs font-bold py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <Save className="w-3.5 h-3.5 text-emerald-400" /> Guardar Datos Físicos
-              </button>
-            </div>
-
-            {/* Cálculo y Diagnóstico de IMC */}
-            {(() => {
-              const latestMetric = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).slice().sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime()).pop();
-              if (!latestMetric || !userHeight || userHeight <= 0) return null;
-              
-              const heightMeters = userHeight / 100;
-              const weightKg = latestMetric.weight;
-              const bmi = weightKg / (heightMeters * heightMeters);
-              
-              let classification = '';
-              let bmiColor = '';
-              let bmiBg = '';
-              let bmiPercentage = 0; // Para el slider visual (de 15 a 35 de IMC)
-
-              if (bmi < 18.5) {
-                classification = 'Bajo Peso';
-                bmiColor = 'text-blue-400';
-                bmiBg = 'bg-blue-500/10 border-blue-500/20';
-                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
-              } else if (bmi >= 18.5 && bmi < 25) {
-                classification = 'Rango Saludable';
-                bmiColor = 'text-emerald-400';
-                bmiBg = 'bg-emerald-500/10 border-emerald-500/20';
-                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
-              } else if (bmi >= 25 && bmi < 30) {
-                classification = 'Sobrepeso';
-                bmiColor = 'text-amber-400';
-                bmiBg = 'bg-amber-500/10 border-amber-500/20';
-                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
-              } else {
-                classification = 'Obesidad';
-                bmiColor = 'text-rose-400';
-                bmiBg = 'bg-rose-500/10 border-rose-500/20';
-                bmiPercentage = Math.max(0, Math.min(100, ((bmi - 15) / 20) * 100));
-              }
-
-              return (
-                <div className={`glass-card rounded-2xl p-4 border ${bmiBg} space-y-3`}>
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Cálculo de IMC</p>
-                      <h4 className={`text-base font-black ${bmiColor} mt-0.5`}>
-                        {bmi.toFixed(1)} — {classification}
-                      </h4>
-                    </div>
-                    <Scale className={`w-7 h-7 ${bmiColor} opacity-80`} />
-                  </div>
-                  
-                  {/* Slider visual indicador de IMC */}
-                  <div className="space-y-1">
-                    <div className="w-full h-2 rounded-full bg-slate-900 relative border border-slate-800">
-                      <div 
-                        className={`absolute top-0 bottom-0 rounded-full bg-gradient-to-r from-blue-500 via-emerald-500 to-rose-500`}
-                        style={{ width: '100%', opacity: 0.3 }}
-                      ></div>
-                      <div 
-                        className={`absolute w-3 h-3 rounded-full bg-white border-2 border-slate-950 shadow-md -top-0.5 transition-all`}
-                        style={{ left: `${bmiPercentage}%`, transform: 'translateX(-50%)' }}
-                      ></div>
-                    </div>
-                    <div className="flex justify-between text-[8px] text-slate-500 font-bold">
-                      <span>15 (Bajo)</span>
-                      <span>22 (Normal)</span>
-                      <span>28 (Sobrepeso)</span>
-                      <span>35 (Obeso)</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Formulario para registrar una nueva medición */}
-            <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Nueva Medición</h3>
-              
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                {/* 1. PESO / WEIGHT (KG) */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">PESO / WEIGHT (KG)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="Ej: 75.4"
-                    value={weightInput}
-                    onChange={e => {
-                      const w = e.target.value;
-                      setWeightInput(w);
-                      if (userHeight > 0 && w && !isNaN(Number(w))) {
-                        const calc = (Number(w) / ((userHeight / 100) * (userHeight / 100))).toFixed(1);
-                        setBmiInput(calc);
-                      }
-                    }}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-
-                {/* 2. IMC / BMI */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">IMC / BMI</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="Ej: 24.2"
-                    value={bmiInput}
-                    onChange={e => setBmiInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-
-                {/* 3. % GRASA / BODY FAT */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">% GRASA / BODY FAT</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="Ej: 15.2"
-                    value={fatInput}
-                    onChange={e => setFatInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-
-                {/* 4. % MÚS. ESQ. / MUSCLE */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">% MÚS. ESQ. / MUSCLE</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    placeholder="Ej: 42.1"
-                    value={muscleInput}
-                    onChange={e => setMuscleInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-
-                {/* 5. METAB. BASAL / RM KCAL */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">METAB. BASAL / RM KCAL</label>
-                  <input
-                    type="number"
-                    placeholder="Ej: 1650"
-                    value={bmrInput}
-                    onChange={e => setBmrInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-
-                {/* 6. EDAD CORPORAL / BODY AGE */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">EDAD CORPORAL / BODY AGE</label>
-                  <input
-                    type="number"
-                    placeholder="Ej: 28"
-                    value={bodyAgeInput}
-                    onChange={e => setBodyAgeInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-
-                {/* 7. GRASA VISCERAL / VISCERAL FAT */}
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">GRASA VISCERAL / VISCERAL FAT</label>
-                  <input
-                    type="number"
-                    placeholder="Ej: 5"
-                    value={visceralFatInput}
-                    onChange={e => setVisceralFatInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha de Medición</label>
-                <input
-                  type="date"
-                  value={metricDate}
-                  onChange={e => setMetricDate(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
-                />
-              </div>
-
-              <button
-                onClick={handleSaveBodyMetric}
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-955 font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/10 cursor-pointer text-xs"
-              >
-                <Plus className="w-4 h-4" /> Registrar Peso / Mediciones
-              </button>
-            </div>
-
-            {/* Gráfico evolutivo en SVG */}
-            {(() => {
-              const activeMetrics = bodyMetrics
-                ? bodyMetrics
-                    .filter(m => m.deleted === 0)
-                    .slice()
-                    .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime())
-                : [];
-
-              if (!activeMetrics || activeMetrics.length < 2) {
-                return (
-                  <div className="h-44 flex flex-col items-center justify-center bg-slate-900/20 rounded-2xl border border-slate-900 border-dashed p-4 text-center">
-                    <TrendingUp className="w-8 h-8 text-slate-700 mb-2" />
-                    <p className="text-xs text-slate-400 font-semibold">Gráfica de Evolución</p>
-                    <p className="text-[10px] text-slate-500 mt-1">Registra al menos 2 mediciones en días diferentes para ver tu evolución gráfica de peso.</p>
-                  </div>
-                );
-              }
-              
-              const chartWidth = 350;
-              const chartHeight = 175;
-              const paddingX = 38;
-              const paddingTop = 32;
-              const paddingBottom = 38;
-              
-              const weights = activeMetrics.map(m => m.weight);
-              const minWeight = Math.min(...weights) - 1;
-              const maxWeight = Math.max(...weights) + 1;
-              const weightRange = maxWeight - minWeight || 1;
-              
-              const plotWidth = chartWidth - paddingX * 2;
-              const plotHeight = chartHeight - paddingTop - paddingBottom;
-              
-              const points = activeMetrics.map((m, idx) => {
-                const x = paddingX + (idx / (activeMetrics.length - 1)) * plotWidth;
-                const y = (chartHeight - paddingBottom) - ((m.weight - minWeight) / weightRange) * plotHeight;
-                return { x, y, ...m };
-              });
-              
-              const pathD = `M ${points.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L ')}`;
-              const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${(chartHeight - paddingBottom).toFixed(1)} L ${points[0].x.toFixed(1)} ${(chartHeight - paddingBottom).toFixed(1)} Z`;
-              
-              const showDateIndices = new Set<number>();
-              if (points.length <= 6) {
-                points.forEach((_, i) => showDateIndices.add(i));
-              } else {
-                showDateIndices.add(0);
-                showDateIndices.add(points.length - 1);
-                const step = Math.ceil(points.length / 4);
-                for (let i = step; i < points.length - 1; i += step) {
-                  showDateIndices.add(i);
-                }
-              }
-
-              return (
-                <div className="glass-card p-4 rounded-2xl border border-slate-900 space-y-3">
-                  <div className="flex items-center justify-between px-1">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Evolución de Peso</h4>
-                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                      {activeMetrics.length} mediciones
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-auto overflow-visible">
-                      <defs>
-                        <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
-                          <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
-                        </linearGradient>
-                      </defs>
-
-                      {/* Líneas de cuadrícula de fondo */}
-                      <line x1={paddingX} y1={paddingTop} x2={chartWidth - paddingX} y2={paddingTop} stroke="#1e293b" strokeDasharray="3" />
-                      <line x1={paddingX} y1={paddingTop + plotHeight / 2} x2={chartWidth - paddingX} y2={paddingTop + plotHeight / 2} stroke="#1e293b" strokeDasharray="3" />
-                      <line x1={paddingX} y1={chartHeight - paddingBottom} x2={chartWidth - paddingX} y2={chartHeight - paddingBottom} stroke="#334155" strokeWidth="1" />
-                      
-                      {/* Área sombreada bajo la curva */}
-                      <path d={areaD} fill="url(#weightGradient)" />
-                      
-                      {/* Línea principal */}
-                      <path d={pathD} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                      
-                      {/* Puntos, Etiquetas de Peso y Fechas */}
-                      {points.map((p, idx) => {
-                        const isLast = idx === points.length - 1;
-                        const isMin = p.weight === Math.min(...weights);
-                        const isMax = p.weight === Math.max(...weights);
-                        const isHovered = hoveredMetricId === p.id;
-                        const showWeightLabel = isHovered || points.length <= 6 || isLast || isMin || isMax;
-                        
-                        return (
-                          <g
-                            key={p.id || idx}
-                            className="cursor-pointer"
-                            onMouseEnter={() => setHoveredMetricId(p.id)}
-                            onMouseLeave={() => setHoveredMetricId(null)}
-                            onClick={() => setHoveredMetricId(prev => prev === p.id ? null : p.id)}
-                          >
-                            {/* Tick mark en eje X */}
-                            <line
-                              x1={p.x}
-                              y1={chartHeight - paddingBottom}
-                              x2={p.x}
-                              y2={chartHeight - paddingBottom + 4}
-                              stroke={isHovered ? "#10b981" : "#475569"}
-                              strokeWidth={isHovered ? "1.5" : "1"}
-                            />
-
-                            {/* Círculo invisible táctil / hover */}
-                            <circle cx={p.x} cy={p.y} r="12" fill="transparent" />
-
-                            {/* Círculo indicador */}
-                            <circle
-                              cx={p.x}
-                              cy={p.y}
-                              r={isHovered ? "5.5" : isLast ? "4.5" : "3.5"}
-                              fill={isHovered || isLast ? "#10b981" : "#020617"}
-                              stroke="#10b981"
-                              strokeWidth={isHovered ? "3" : "2"}
-                            />
-                            
-                            {/* Etiqueta de Peso (arriba del punto) */}
-                            {showWeightLabel && (
-                              <g>
-                                <rect
-                                  x={p.x - 20}
-                                  y={p.y - 20}
-                                  width="40"
-                                  height="15"
-                                  rx="4"
-                                  fill="#090d16"
-                                  stroke={isHovered ? "#10b981" : isLast ? "#10b981" : "#334155"}
-                                  strokeWidth="1"
-                                />
-                                <text
-                                  x={p.x}
-                                  y={p.y - 9}
-                                  fill={isHovered || isLast ? "#10b981" : "#e2e8f0"}
-                                  fontSize="8.5"
-                                  fontWeight="bold"
-                                  textAnchor="middle"
-                                >
-                                  {p.weight} kg
-                                </text>
-                              </g>
-                            )}
-
-                            {/* Etiqueta de Fecha (abajo en eje X) */}
-                            {showDateIndices.has(idx) && (
-                              <text
-                                x={p.x}
-                                y={chartHeight - 12}
-                                fill={isHovered ? "#10b981" : "#94a3b8"}
-                                fontSize="8.5"
-                                fontWeight={isHovered ? "700" : "600"}
-                                textAnchor="middle"
-                              >
-                                {formatShortDate(p.logged_at)}
-                              </text>
-                            )}
-                          </g>
-                        );
-                      })}
-                    </svg>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Listado Histórico de Mediciones */}
-            <div className="space-y-2.5">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Historial de Mediciones</h3>
-              {bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).length > 0 ? (
-                <div className="space-y-2">
-                  {bodyMetrics
-                    .filter(m => m.deleted === 0)
-                    .slice()
-                    .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime())
-                    .map(m => (
-                      <div key={m.id} className="glass-card rounded-2xl p-3.5 border border-slate-900 space-y-3 shadow-sm hover:border-slate-800 transition-all">
-                        {/* Cabecera de la tarjeta con fecha y acciones */}
-                        <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="p-1 rounded-md bg-emerald-500/10 text-emerald-400">
-                              <Calendar className="w-3.5 h-3.5" />
-                            </div>
-                            <span className="text-xs font-bold text-slate-200 tracking-wide">
-                              {formatDate(m.logged_at)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {m.synced === 0 && (
-                              <span className="flex items-center gap-1 text-[9px] font-semibold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
-                                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
-                                Pendiente
-                              </span>
-                            )}
-                            <button
-                              onClick={() => handleDeleteBodyMetric(m.id)}
-                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                              title="Eliminar medición"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Cuadrícula organizada de mediciones (1 al 7) */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
-                          {/* 1. Peso */}
-                          <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">1. Peso</span>
-                            <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.weight} <span className="text-[10px] font-semibold text-emerald-500/80">kg</span></span>
-                          </div>
-
-                          {/* 2. IMC */}
-                          {(m.bmi || userHeight > 0) && (
-                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">2. IMC</span>
-                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">
-                                {m.bmi || (m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* 3. % Grasa */}
-                          {m.body_fat > 0 && (
-                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">3. % Grasa</span>
-                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.body_fat} <span className="text-[10px] font-semibold text-emerald-500/80">%</span></span>
-                            </div>
-                          )}
-
-                          {/* 4. % Mús. Esq. */}
-                          {m.muscle_mass > 0 && (
-                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">4. % Mús. Esq.</span>
-                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.muscle_mass} <span className="text-[10px] font-semibold text-emerald-500/80">%</span></span>
-                            </div>
-                          )}
-
-                          {/* 5. Metab. Basal */}
-                          {m.bmr && m.bmr > 0 && (
-                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">5. Metab. Basal</span>
-                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.bmr} <span className="text-[10px] font-semibold text-emerald-500/80">kcal</span></span>
-                            </div>
-                          )}
-
-                          {/* 6. Edad Corporal */}
-                          {m.body_age && m.body_age > 0 && (
-                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">6. Edad Corp.</span>
-                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.body_age} <span className="text-[10px] font-semibold text-emerald-500/80">años</span></span>
-                            </div>
-                          )}
-
-                          {/* 7. Grasa Visceral */}
-                          {m.visceral_fat && m.visceral_fat > 0 && (
-                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">7. Grasa Visc.</span>
-                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.visceral_fat}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              ) : (
-                <div className="glass-card rounded-2xl p-6 border border-slate-900 text-center">
-                  <p className="text-xs text-slate-500">Registra tu primera medición arriba.</p>
-                </div>
-              )}
-            </div>
-          </div>
+          <ProgressView
+            userHeight={userHeight}
+            setUserHeight={setUserHeight}
+            userGender={userGender}
+            setUserGender={setUserGender}
+            userBirthDate={userBirthDate}
+            setUserBirthDate={setUserBirthDate}
+            handleSavePhysicalProfile={handleSavePhysicalProfile}
+            isSavingProfile={isSavingProfile}
+            bodyMetrics={bodyMetrics}
+            currentUserId={currentUserId}
+            onSignOut={handleSignOut}
+            triggerSync={triggerSync}
+            isOnline={isOnline}
+          />
         )}
         {/* 6. VISTA DE COMUNIDAD */}
         {view === 'community' && (
@@ -2747,7 +2700,7 @@ function App() {
                     <p className="text-xs text-slate-400">Cargando rutinas de la comunidad...</p>
                   </div>
                 ) : communityRoutines.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
                     {communityRoutines.map(cRoutine => {
                       const cExs = communityExercises.filter(ex => ex.community_routine_id === cRoutine.id);
                       return (
@@ -2818,7 +2771,7 @@ function App() {
 
       {/* BOTTOM NAVIGATION BAR (Persistente en vistas principales) */}
       {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30">
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30">
           <button
             onClick={() => setView('dashboard')}
             className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
@@ -2838,6 +2791,17 @@ function App() {
             <TrendingUp className="w-5 h-5" />
             <span className="text-[10px] font-bold">Progreso</span>
           </button>
+
+          {workoutRoutine && (
+            <button
+              onClick={() => setView('workout')}
+              className="flex flex-col items-center gap-0.5 cursor-pointer transition-colors text-emerald-400 relative"
+            >
+              <span className="absolute -top-1 right-2 w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <TrendingUp className="w-5 h-5 animate-pulse" />
+              <span className="text-[10px] font-black">En Curso</span>
+            </button>
+          )}
 
           <button
             onClick={() => setView('community')}
