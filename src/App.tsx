@@ -26,7 +26,9 @@ import {
   AlertCircle,
   Lock,
   Scale,
-  User
+  User,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react';
 
 const getExerciseImage = (name: string): string | null => {
@@ -82,12 +84,56 @@ function App() {
   // Función para formatear fechas a DD/MM/YYYY
   const formatDate = (dateValue: string | Date | undefined | null): string => {
     if (!dateValue) return '';
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      const parts = dateValue.split('T')[0].split('-');
+      if (parts.length === 3) {
+        const [y, m, d] = parts;
+        return `${d}/${m}/${y}`;
+      }
+    }
     const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
     if (isNaN(date.getTime())) return '';
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
     return `${day}/${month}/${year}`;
+  };
+
+  // Función para formatear fechas cortas para gráficas (ej. "29 jul")
+  const formatShortDate = (dateValue: string | Date | undefined | null): string => {
+    if (!dateValue) return '';
+    let dayStr = '';
+    let monthIndex = -1;
+    const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+    if (typeof dateValue === 'string' && dateValue.includes('T')) {
+      const parts = dateValue.split('T')[0].split('-');
+      if (parts.length === 3) {
+        dayStr = parts[2];
+        monthIndex = parseInt(parts[1], 10) - 1;
+      }
+    }
+
+    if (monthIndex < 0 || monthIndex > 11) {
+      const date = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
+      if (isNaN(date.getTime())) return '';
+      dayStr = String(date.getDate());
+      monthIndex = date.getMonth();
+    }
+
+    return `${parseInt(dayStr, 10)} ${monthNames[monthIndex]}`;
+  };
+
+  // Función para ordenar ejercicios respetando order_index
+  const sortExercises = <T extends Partial<LocalExercise>>(list: T[]): T[] => {
+    return list.slice().sort((a, b) => {
+      if (a.order_index !== undefined && b.order_index !== undefined) {
+        return a.order_index - b.order_index;
+      }
+      const timeA = new Date(a.created_at || a.updated_at || 0).getTime();
+      const timeB = new Date(b.created_at || b.updated_at || 0).getTime();
+      return timeA - timeB;
+    });
   };
 
   // Estados para la comunidad
@@ -122,9 +168,10 @@ function App() {
     [currentUserId]
   );
   const bodyMetrics = useLiveQuery(
-    () => {
+    async () => {
       if (!currentUserId) return [];
-      return db.body_metrics.where('user_id').equals(currentUserId).and(m => m.deleted === 0).toArray();
+      const list = await db.body_metrics.where('user_id').equals(currentUserId).and(m => m.deleted === 0).toArray();
+      return list.sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime());
     },
     [currentUserId]
   );
@@ -152,6 +199,7 @@ function App() {
 
   // Estados para el registro de indicadores físicos en "Mi Progreso"
   const [weightInput, setWeightInput] = useState<string>('');
+  const [bmiInput, setBmiInput] = useState<string>('');
   const [fatInput, setFatInput] = useState<string>('');
   const [muscleInput, setMuscleInput] = useState<string>('');
   const [bmrInput, setBmrInput] = useState<string>('');
@@ -159,6 +207,7 @@ function App() {
   const [bodyAgeInput, setBodyAgeInput] = useState<string>('');
   const [metricDate, setMetricDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
+  const [hoveredMetricId, setHoveredMetricId] = useState<string | null>(null);
   
   // Inputs del perfil físico
   const [userHeight, setUserHeight] = useState<number>(0);
@@ -565,7 +614,7 @@ function App() {
     
     setIsLoading(true);
     try {
-      const localExs = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+      const localExs = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
       
       const { data: sharedRoutine, error: routineError } = await supabase
         .from('community_routines')
@@ -686,16 +735,23 @@ function App() {
     const metricId = generateUUID();
     
     try {
+      const calculatedBmi = bmiInput
+        ? Number(bmiInput)
+        : userHeight > 0 && weightInput
+        ? Number((Number(weightInput) / ((userHeight / 100) * (userHeight / 100))).toFixed(1))
+        : undefined;
+
       await db.body_metrics.add({
         id: metricId,
         user_id: currentUserId,
         weight: Number(weightInput),
+        bmi: calculatedBmi,
         body_fat: Number(fatInput) || 0,
         muscle_mass: Number(muscleInput) || 0,
         bmr: Number(bmrInput) || undefined,
-        visceral_fat: Number(visceralFatInput) || undefined,
         body_age: Number(bodyAgeInput) || undefined,
-        logged_at: new Date(metricDate).toISOString(),
+        visceral_fat: Number(visceralFatInput) || undefined,
+        logged_at: metricDate.includes('T') ? metricDate : new Date(`${metricDate}T12:00:00`).toISOString(),
         deleted: 0,
         created_at: now,
         updated_at: now,
@@ -703,6 +759,7 @@ function App() {
       });
       
       setWeightInput('');
+      setBmiInput('');
       setFatInput('');
       setMuscleInput('');
       setBmrInput('');
@@ -838,8 +895,8 @@ function App() {
     setRoutineName(routine.name);
     setRoutineDescription(routine.description);
     
-    // Filtrar los ejercicios de esta rutina que no estén borrados
-    const existing = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+    // Filtrar los ejercicios de esta rutina que no estén borrados y ordenarlos por posición
+    const existing = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     setRoutineExercises(existing);
     setView('edit_routine');
   };
@@ -861,6 +918,17 @@ function App() {
   const handleRemoveExerciseRow = (index: number) => {
     const copy = [...routineExercises];
     copy.splice(index, 1);
+    setRoutineExercises(copy);
+  };
+
+  const handleMoveEditExercise = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === routineExercises.length - 1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const copy = [...routineExercises];
+    const temp = copy[index];
+    copy[index] = copy[targetIndex];
+    copy[targetIndex] = temp;
     setRoutineExercises(copy);
   };
 
@@ -908,9 +976,11 @@ function App() {
       }
     }
 
-    // Guardar / actualizar los ejercicios de la lista actual
-    for (const ex of routineExercises) {
+    // Guardar / actualizar los ejercicios de la lista actual en su nuevo orden
+    for (let i = 0; i < routineExercises.length; i++) {
+      const ex = routineExercises[i];
       if (!ex.name?.trim()) continue;
+
       const exData: LocalExercise = {
         id: ex.id || generateUUID(),
         routine_id: routineId,
@@ -919,6 +989,7 @@ function App() {
         series: Number(ex.series) || 3,
         reps: Number(ex.reps) || 10,
         weight: Number(ex.weight) || 0,
+        order_index: i,
         deleted: 0,
         created_at: ex.created_at || now,
         updated_at: now,
@@ -963,7 +1034,7 @@ function App() {
   // --- ENTRENAMIENTO ACTIVO ---
   const handleStartWorkout = async (routine: LocalRoutine) => {
     setWorkoutRoutine(routine);
-    const rExercises = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+    const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     
     // Inicializar la estructura del registro de series
     const initialSession: typeof workoutSessionLogs = {};
@@ -1007,9 +1078,22 @@ function App() {
     setWorkoutSessionLogs(copy);
   };
 
-  const handleWorkoutValueChange = (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: number) => {
+  const handleWorkoutValueChange = (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
     const copy = { ...workoutSessionLogs };
     copy[exerciseId][seriesIndex][field] = value;
+    setWorkoutSessionLogs(copy);
+  };
+
+  const handlePropagateSeriesValue = (exerciseId: string, fromSeriesIndex: number, field: 'weight' | 'reps', value: number) => {
+    const copy = { ...workoutSessionLogs };
+    const list = copy[exerciseId];
+    if (!list) return;
+
+    for (let i = fromSeriesIndex + 1; i < list.length; i++) {
+      if (!list[i].completed) {
+        list[i][field] = value;
+      }
+    }
     setWorkoutSessionLogs(copy);
   };
 
@@ -1019,7 +1103,7 @@ function App() {
 
     let logsAdded = 0;
 
-    // Registrar logs de series completadas y actualizar peso de ejercicio
+    // Registrar logs de series completadas y actualizar peso de ejercicio para siguientes sesiones
     for (const exerciseId of Object.keys(workoutSessionLogs)) {
       const seriesList = workoutSessionLogs[exerciseId];
       let maxWeightUsed = 0;
@@ -1050,11 +1134,19 @@ function App() {
         }
       }
 
-      // Progresar la carga: Actualizar peso/reps por defecto para el ejercicio
-      if (completedSeries.length > 0) {
+      // Progresar la carga: Guardar peso/reps por defecto actualizado para las siguientes sesiones
+      let weightToSave = maxWeightUsed;
+      let repsToSave = targetReps;
+
+      if (weightToSave <= 0 && seriesList.length > 0) {
+        weightToSave = seriesList[seriesList.length - 1].weight || seriesList[0].weight;
+        repsToSave = seriesList[seriesList.length - 1].reps || seriesList[0].reps;
+      }
+
+      if (weightToSave > 0) {
         await db.exercises.update(exerciseId, {
-          weight: maxWeightUsed,
-          reps: targetReps,
+          weight: weightToSave,
+          reps: repsToSave,
           series: targetSeries,
           updated_at: now,
           synced: 0
@@ -1362,9 +1454,9 @@ function App() {
 
           {/* Sincronización */}
           <button
-            onClick={triggerSync}
-            disabled={isSyncing || !isOnline}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all ${
+            onClick={() => triggerSync(true)}
+            disabled={!isOnline}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
               pendingCount > 0
                 ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 shadow-lg shadow-amber-500/20'
                 : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 disabled:opacity-50'
@@ -1480,7 +1572,7 @@ function App() {
               {routines && routines.length > 0 ? (
                 <div className="space-y-3">
                   {routines.map(routine => {
-                    const rExercises = exercises?.filter(ex => ex.routine_id === routine.id && ex.deleted === 0) || [];
+                    const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
                     return (
                       <div 
                         key={routine.id} 
@@ -1610,7 +1702,7 @@ function App() {
               </div>
 
               {routineExercises.length > 0 ? (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {routineExercises.map((ex, index) => (
                     <div key={ex.id} className="glass-card rounded-2xl p-4 border border-slate-900 space-y-3">
                       <div className="flex items-center justify-between gap-2">
@@ -1619,25 +1711,94 @@ function App() {
                           placeholder="Nombre del Ejercicio (Ej: Press Banca)"
                           value={ex.name || ''}
                           onChange={e => handleExerciseChange(index, 'name', e.target.value)}
-                          className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                          className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-emerald-500/50"
                         />
                         
-                        {/* Subir/Ver Imagen de Referencia */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {ex.image_data ? (
-                            <div className="relative w-8 h-8 rounded-lg border border-slate-850 overflow-hidden group" title="Haz clic en la X para eliminar">
-                              <img src={ex.image_data} className="w-full h-full object-cover" />
-                              <button
-                                type="button"
-                                onClick={() => handleExerciseChange(index, 'image_data', undefined)}
-                                className="absolute inset-0 bg-rose-950/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-rose-400 cursor-pointer"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
+                        {/* Reordenar ejercicios (Subir / Bajar) */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => handleMoveEditExercise(index, 'up')}
+                            className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
+                            title="Subir posición"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === routineExercises.length - 1}
+                            onClick={() => handleMoveEditExercise(index, 'down')}
+                            className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white disabled:opacity-20 disabled:hover:text-slate-400 transition-colors cursor-pointer"
+                            title="Bajar posición"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExerciseRow(index)}
+                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                          title="Eliminar ejercicio"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Indicador y Selector de Foto de Referencia */}
+                      {(() => {
+                        const customImage = ex.image_data;
+                        const defaultImage = getExerciseImage(ex.name || '');
+                        const hasImage = Boolean(customImage || defaultImage);
+                        const currentImg = customImage || defaultImage;
+
+                        return (
+                          <div className="flex items-center justify-between bg-slate-950/60 p-2.5 rounded-xl border border-slate-900 gap-3">
+                            <div className="flex items-center gap-3">
+                              {hasImage && currentImg ? (
+                                <div className="relative w-12 h-12 rounded-lg border border-slate-800 overflow-hidden shrink-0 bg-slate-900">
+                                  <img src={currentImg} alt={ex.name || 'Ejercicio'} className="w-full h-full object-cover" />
+                                  {customImage && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleExerciseChange(index, 'image_data', undefined)}
+                                      className="absolute top-0.5 right-0.5 bg-rose-950/90 text-rose-300 p-0.5 rounded-md hover:bg-rose-600 hover:text-white transition-colors cursor-pointer"
+                                      title="Quitar foto personalizada"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg border border-dashed border-slate-800 flex items-center justify-center shrink-0 bg-slate-950/40 text-slate-600">
+                                  <ImageIcon className="w-5 h-5" />
+                                </div>
+                              )}
+
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`w-2 h-2 rounded-full ${hasImage ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                                  <p className="text-xs font-bold text-slate-200">
+                                    {customImage 
+                                      ? 'Foto Personalizada' 
+                                      : defaultImage 
+                                      ? 'Foto Estándar' 
+                                      : 'Sin foto asignada'}
+                                  </p>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5">
+                                  {hasImage 
+                                    ? 'Esta foto se mostrará al ejecutar la rutina' 
+                                    : 'Sube una foto para guiar la ejecución'}
+                                </p>
+                              </div>
                             </div>
-                          ) : (
-                            <label className="w-8 h-8 rounded-lg border border-dashed border-slate-800 hover:border-emerald-500/50 flex items-center justify-center cursor-pointer text-slate-500 hover:text-emerald-400 transition-all" title="Subir imagen de referencia">
-                              <Plus className="w-3.5 h-3.5" />
+
+                            {/* Botón para subir o cambiar foto */}
+                            <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-emerald-400 border border-slate-800 hover:border-emerald-500/30 transition-all cursor-pointer shrink-0">
+                              <Camera className="w-3.5 h-3.5" />
+                              <span>{customImage ? 'Cambiar Foto' : 'Adjuntar Foto'}</span>
                               <input
                                 type="file"
                                 accept="image/*"
@@ -1656,16 +1817,9 @@ function App() {
                                 }}
                               />
                             </label>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={() => handleRemoveExerciseRow(index)}
-                          className="p-2 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                          </div>
+                        );
+                      })()}
 
                       <div className="grid grid-cols-4 gap-2">
                         <div>
@@ -1686,8 +1840,11 @@ function App() {
                             type="number"
                             min="1"
                             max="10"
-                            value={ex.series || 3}
-                            onChange={e => handleExerciseChange(index, 'series', parseInt(e.target.value) || 1)}
+                            value={ex.series !== undefined ? ex.series : ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handleExerciseChange(index, 'series', val === '' ? '' : (parseInt(val) || 1));
+                            }}
                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] text-center text-white focus:outline-none focus:border-emerald-500/50"
                           />
                         </div>
@@ -1697,8 +1854,11 @@ function App() {
                             type="number"
                             min="1"
                             max="100"
-                            value={ex.reps || 10}
-                            onChange={e => handleExerciseChange(index, 'reps', parseInt(e.target.value) || 1)}
+                            value={ex.reps !== undefined ? ex.reps : ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handleExerciseChange(index, 'reps', val === '' ? '' : (parseInt(val) || 1));
+                            }}
                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] text-center text-white focus:outline-none focus:border-emerald-500/50"
                           />
                         </div>
@@ -1707,8 +1867,11 @@ function App() {
                           <input
                             type="number"
                             step="0.5"
-                            value={ex.weight || 0}
-                            onChange={e => handleExerciseChange(index, 'weight', parseFloat(e.target.value) || 0)}
+                            value={ex.weight !== undefined ? ex.weight : ''}
+                            onChange={e => {
+                              const val = e.target.value;
+                              handleExerciseChange(index, 'weight', val === '' ? '' : (parseFloat(val) || 0));
+                            }}
                             className="w-full bg-slate-900 border border-slate-800 rounded-lg p-1 text-[11px] text-center text-white focus:outline-none focus:border-emerald-500/50"
                           />
                         </div>
@@ -1789,6 +1952,25 @@ function App() {
                           )}
                         </div>
                         <div className="flex items-center gap-1.5">
+                          {/* Botón para aplicar el peso a las siguientes series */}
+                          {series.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const firstWeight = series[0]?.weight;
+                                if (firstWeight !== undefined && firstWeight > 0) {
+                                  if (confirm(`¿Deseas aplicar ${firstWeight} a las siguientes series de "${ex.name}"?`)) {
+                                    handlePropagateSeriesValue(ex.id, 0, 'weight', firstWeight);
+                                  }
+                                }
+                              }}
+                              className="text-[9px] font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-all flex items-center gap-1 cursor-pointer mr-1"
+                              title="Copiar peso a las siguientes series"
+                            >
+                              <RefreshCw className="w-3 h-3" /> Aplicar a siguientes
+                            </button>
+                          )}
+
                           {/* Botones de Reordenamiento */}
                           <div className="flex items-center gap-1 mr-1">
                             <button
@@ -1878,17 +2060,34 @@ function App() {
                                 type="number"
                                 step="0.5"
                                 disabled={s.completed}
-                                value={s.weight}
-                                onChange={e => handleWorkoutValueChange(ex.id, idx, 'weight', parseFloat(e.target.value) || 0)}
-                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                                value={s.weight !== undefined ? s.weight : ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  handleWorkoutValueChange(ex.id, idx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
+                                }}
+                                onBlur={e => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val) && val > 0) {
+                                    const remaining = series.slice(idx + 1).filter(item => !item.completed);
+                                    if (remaining.length > 0 && remaining.some(item => item.weight !== val)) {
+                                      if (confirm(`¿Deseas aplicar ${val} a las siguientes ${remaining.length} series de "${ex.name}"?`)) {
+                                        handlePropagateSeriesValue(ex.id, idx, 'weight', val);
+                                      }
+                                    }
+                                  }
+                                }}
+                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
                               />
                             </div>
                             <div className="col-span-4 flex justify-center">
                               <input
                                 type="number"
                                 disabled={s.completed}
-                                value={s.reps}
-                                onChange={e => handleWorkoutValueChange(ex.id, idx, 'reps', parseInt(e.target.value) || 0)}
+                                value={s.reps !== undefined ? s.reps : ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  handleWorkoutValueChange(ex.id, idx, 'reps', val === '' ? '' : (parseInt(val) || 0));
+                                }}
                                 className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
                               />
                             </div>
@@ -2063,7 +2262,7 @@ function App() {
 
             {/* Cálculo y Diagnóstico de IMC */}
             {(() => {
-              const latestMetric = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).pop();
+              const latestMetric = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0).slice().sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime()).pop();
               if (!latestMetric || !userHeight || userHeight <= 0) return null;
               
               const heightMeters = userHeight / 100;
@@ -2136,68 +2335,99 @@ function App() {
             <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
               <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Nueva Medición</h3>
               
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {/* 1. PESO / WEIGHT (KG) */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (kg)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">PESO / WEIGHT (KG)</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 75.4"
                     value={weightInput}
-                    onChange={e => setWeightInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    onChange={e => {
+                      const w = e.target.value;
+                      setWeightInput(w);
+                      if (userHeight > 0 && w && !isNaN(Number(w))) {
+                        const calc = (Number(w) / ((userHeight / 100) * (userHeight / 100))).toFixed(1);
+                        setBmiInput(calc);
+                      }
+                    }}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 2. IMC / BMI */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Grasa (Opc.)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">IMC / BMI</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Ej: 24.2"
+                    value={bmiInput}
+                    onChange={e => setBmiInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
+                  />
+                </div>
+
+                {/* 3. % GRASA / BODY FAT */}
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">% GRASA / BODY FAT</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 15.2"
                     value={fatInput}
                     onChange={e => setFatInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 4. % MÚS. ESQ. / MUSCLE */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">% Mús. Esq. (Opc.)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">% MÚS. ESQ. / MUSCLE</label>
                   <input
                     type="number"
                     step="0.1"
                     placeholder="Ej: 42.1"
                     value={muscleInput}
                     onChange={e => setMuscleInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 5. METAB. BASAL / RM KCAL */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Metab. Basal (kcal)</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">METAB. BASAL / RM KCAL</label>
                   <input
                     type="number"
                     placeholder="Ej: 1650"
                     value={bmrInput}
                     onChange={e => setBmrInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
+
+                {/* 6. EDAD CORPORAL / BODY AGE */}
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Grasa Visceral</label>
-                  <input
-                    type="number"
-                    placeholder="Ej: 5"
-                    value={visceralFatInput}
-                    onChange={e => setVisceralFatInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Edad Corporal</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">EDAD CORPORAL / BODY AGE</label>
                   <input
                     type="number"
                     placeholder="Ej: 28"
                     value={bodyAgeInput}
                     onChange={e => setBodyAgeInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
+                  />
+                </div>
+
+                {/* 7. GRASA VISCERAL / VISCERAL FAT */}
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">GRASA VISCERAL / VISCERAL FAT</label>
+                  <input
+                    type="number"
+                    placeholder="Ej: 5"
+                    value={visceralFatInput}
+                    onChange={e => setVisceralFatInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-semibold"
                   />
                 </div>
               </div>
@@ -2222,7 +2452,13 @@ function App() {
 
             {/* Gráfico evolutivo en SVG */}
             {(() => {
-              const activeMetrics = bodyMetrics && bodyMetrics.filter(m => m.deleted === 0);
+              const activeMetrics = bodyMetrics
+                ? bodyMetrics
+                    .filter(m => m.deleted === 0)
+                    .slice()
+                    .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime())
+                : [];
+
               if (!activeMetrics || activeMetrics.length < 2) {
                 return (
                   <div className="h-44 flex flex-col items-center justify-center bg-slate-900/20 rounded-2xl border border-slate-900 border-dashed p-4 text-center">
@@ -2233,47 +2469,150 @@ function App() {
                 );
               }
               
-              const padding = 30;
               const chartWidth = 350;
-              const chartHeight = 150;
+              const chartHeight = 175;
+              const paddingX = 38;
+              const paddingTop = 32;
+              const paddingBottom = 38;
               
               const weights = activeMetrics.map(m => m.weight);
-              const minWeight = Math.min(...weights) - 2;
-              const maxWeight = Math.max(...weights) + 2;
+              const minWeight = Math.min(...weights) - 1;
+              const maxWeight = Math.max(...weights) + 1;
               const weightRange = maxWeight - minWeight || 1;
               
+              const plotWidth = chartWidth - paddingX * 2;
+              const plotHeight = chartHeight - paddingTop - paddingBottom;
+              
               const points = activeMetrics.map((m, idx) => {
-                const x = padding + (idx / (activeMetrics.length - 1)) * (chartWidth - padding * 2);
-                const y = chartHeight - padding - ((m.weight - minWeight) / weightRange) * (chartHeight - padding * 2);
+                const x = paddingX + (idx / (activeMetrics.length - 1)) * plotWidth;
+                const y = (chartHeight - paddingBottom) - ((m.weight - minWeight) / weightRange) * plotHeight;
                 return { x, y, ...m };
               });
               
-              const pathD = `M ${points.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+              const pathD = `M ${points.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' L ')}`;
+              const areaD = `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${(chartHeight - paddingBottom).toFixed(1)} L ${points[0].x.toFixed(1)} ${(chartHeight - paddingBottom).toFixed(1)} Z`;
               
+              const showDateIndices = new Set<number>();
+              if (points.length <= 6) {
+                points.forEach((_, i) => showDateIndices.add(i));
+              } else {
+                showDateIndices.add(0);
+                showDateIndices.add(points.length - 1);
+                const step = Math.ceil(points.length / 4);
+                for (let i = step; i < points.length - 1; i += step) {
+                  showDateIndices.add(i);
+                }
+              }
+
               return (
                 <div className="glass-card p-4 rounded-2xl border border-slate-900 space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Evolución de Peso</h4>
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Evolución de Peso</h4>
+                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      {activeMetrics.length} mediciones
+                    </span>
+                  </div>
                   <div className="relative">
-                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-auto">
-                      {/* Grid Lines */}
-                      <line x1={padding} y1={padding} x2={chartWidth - padding} y2={padding} stroke="#1e293b" strokeDasharray="3" />
-                      <line x1={padding} y1={chartHeight - padding} x2={chartWidth - padding} y2={chartHeight - padding} stroke="#1e293b" strokeDasharray="3" />
+                    <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-auto overflow-visible">
+                      <defs>
+                        <linearGradient id="weightGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                          <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Líneas de cuadrícula de fondo */}
+                      <line x1={paddingX} y1={paddingTop} x2={chartWidth - paddingX} y2={paddingTop} stroke="#1e293b" strokeDasharray="3" />
+                      <line x1={paddingX} y1={paddingTop + plotHeight / 2} x2={chartWidth - paddingX} y2={paddingTop + plotHeight / 2} stroke="#1e293b" strokeDasharray="3" />
+                      <line x1={paddingX} y1={chartHeight - paddingBottom} x2={chartWidth - paddingX} y2={chartHeight - paddingBottom} stroke="#334155" strokeWidth="1" />
                       
-                      {/* Line */}
+                      {/* Área sombreada bajo la curva */}
+                      <path d={areaD} fill="url(#weightGradient)" />
+                      
+                      {/* Línea principal */}
                       <path d={pathD} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                       
-                      {/* Points */}
-                      {points.map((p, idx) => (
-                        <g key={p.id}>
-                          <circle cx={p.x} cy={p.y} r="3" fill="#020617" stroke="#10b981" strokeWidth="2" />
-                          {/* Tooltip on last weight */}
-                          {idx === points.length - 1 && (
-                            <text x={p.x} y={p.y - 8} fill="#10b981" fontSize="8" fontWeight="bold" textAnchor="middle">
-                              {p.weight} kg
-                            </text>
-                          )}
-                        </g>
-                      ))}
+                      {/* Puntos, Etiquetas de Peso y Fechas */}
+                      {points.map((p, idx) => {
+                        const isLast = idx === points.length - 1;
+                        const isMin = p.weight === Math.min(...weights);
+                        const isMax = p.weight === Math.max(...weights);
+                        const isHovered = hoveredMetricId === p.id;
+                        const showWeightLabel = isHovered || points.length <= 6 || isLast || isMin || isMax;
+                        
+                        return (
+                          <g
+                            key={p.id || idx}
+                            className="cursor-pointer"
+                            onMouseEnter={() => setHoveredMetricId(p.id)}
+                            onMouseLeave={() => setHoveredMetricId(null)}
+                            onClick={() => setHoveredMetricId(prev => prev === p.id ? null : p.id)}
+                          >
+                            {/* Tick mark en eje X */}
+                            <line
+                              x1={p.x}
+                              y1={chartHeight - paddingBottom}
+                              x2={p.x}
+                              y2={chartHeight - paddingBottom + 4}
+                              stroke={isHovered ? "#10b981" : "#475569"}
+                              strokeWidth={isHovered ? "1.5" : "1"}
+                            />
+
+                            {/* Círculo invisible táctil / hover */}
+                            <circle cx={p.x} cy={p.y} r="12" fill="transparent" />
+
+                            {/* Círculo indicador */}
+                            <circle
+                              cx={p.x}
+                              cy={p.y}
+                              r={isHovered ? "5.5" : isLast ? "4.5" : "3.5"}
+                              fill={isHovered || isLast ? "#10b981" : "#020617"}
+                              stroke="#10b981"
+                              strokeWidth={isHovered ? "3" : "2"}
+                            />
+                            
+                            {/* Etiqueta de Peso (arriba del punto) */}
+                            {showWeightLabel && (
+                              <g>
+                                <rect
+                                  x={p.x - 20}
+                                  y={p.y - 20}
+                                  width="40"
+                                  height="15"
+                                  rx="4"
+                                  fill="#090d16"
+                                  stroke={isHovered ? "#10b981" : isLast ? "#10b981" : "#334155"}
+                                  strokeWidth="1"
+                                />
+                                <text
+                                  x={p.x}
+                                  y={p.y - 9}
+                                  fill={isHovered || isLast ? "#10b981" : "#e2e8f0"}
+                                  fontSize="8.5"
+                                  fontWeight="bold"
+                                  textAnchor="middle"
+                                >
+                                  {p.weight} kg
+                                </text>
+                              </g>
+                            )}
+
+                            {/* Etiqueta de Fecha (abajo en eje X) */}
+                            {showDateIndices.has(idx) && (
+                              <text
+                                x={p.x}
+                                y={chartHeight - 12}
+                                fill={isHovered ? "#10b981" : "#94a3b8"}
+                                fontSize="8.5"
+                                fontWeight={isHovered ? "700" : "600"}
+                                textAnchor="middle"
+                              >
+                                {formatShortDate(p.logged_at)}
+                              </text>
+                            )}
+                          </g>
+                        );
+                      })}
                     </svg>
                   </div>
                 </div>
@@ -2288,33 +2627,93 @@ function App() {
                   {bodyMetrics
                     .filter(m => m.deleted === 0)
                     .slice()
-                    .reverse()
+                    .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime())
                     .map(m => (
-                      <div key={m.id} className="glass-card rounded-xl p-3 border border-slate-900 flex justify-between items-center">
-                        <div className="space-y-1">
-                          <p className="text-[10px] text-slate-455 font-semibold">{formatDate(m.logged_at)}</p>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-bold text-white mt-1">
-                            <span>Peso: <span className="text-emerald-400">{m.weight} kg</span></span>
-                            {userHeight > 0 && (
-                              <span>IMC: <span className="text-emerald-400">{(m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}</span></span>
+                      <div key={m.id} className="glass-card rounded-2xl p-3.5 border border-slate-900 space-y-3 shadow-sm hover:border-slate-800 transition-all">
+                        {/* Cabecera de la tarjeta con fecha y acciones */}
+                        <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1 rounded-md bg-emerald-500/10 text-emerald-400">
+                              <Calendar className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="text-xs font-bold text-slate-200 tracking-wide">
+                              {formatDate(m.logged_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {m.synced === 0 && (
+                              <span className="flex items-center gap-1 text-[9px] font-semibold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse"></span>
+                                Pendiente
+                              </span>
                             )}
-                            {m.body_fat > 0 && <span>Grasa: <span className="text-emerald-400">{m.body_fat}%</span></span>}
-                            {m.muscle_mass > 0 && <span>Mús. Esq: <span className="text-emerald-400">{m.muscle_mass}%</span></span>}
-                            {m.bmr && m.bmr > 0 && <span>Metab. Basal: <span className="text-emerald-400">{m.bmr} kcal</span></span>}
-                            {m.visceral_fat && m.visceral_fat > 0 && <span>Grasa Visceral: <span className="text-emerald-400">{m.visceral_fat}</span></span>}
-                            {m.body_age && m.body_age > 0 && <span>Edad Corporal: <span className="text-emerald-400">{m.body_age} años</span></span>}
+                            <button
+                              onClick={() => handleDeleteBodyMetric(m.id)}
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                              title="Eliminar medición"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {m.synced === 0 && (
-                            <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" title="Sincronización pendiente"></span>
+
+                        {/* Cuadrícula organizada de mediciones (1 al 7) */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                          {/* 1. Peso */}
+                          <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">1. Peso</span>
+                            <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.weight} <span className="text-[10px] font-semibold text-emerald-500/80">kg</span></span>
+                          </div>
+
+                          {/* 2. IMC */}
+                          {(m.bmi || userHeight > 0) && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">2. IMC</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">
+                                {m.bmi || (m.weight / ((userHeight / 100) * (userHeight / 100))).toFixed(1)}
+                              </span>
+                            </div>
                           )}
-                          <button
-                            onClick={() => handleDeleteBodyMetric(m.id)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+
+                          {/* 3. % Grasa */}
+                          {m.body_fat > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">3. % Grasa</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.body_fat} <span className="text-[10px] font-semibold text-emerald-500/80">%</span></span>
+                            </div>
+                          )}
+
+                          {/* 4. % Mús. Esq. */}
+                          {m.muscle_mass > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">4. % Mús. Esq.</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.muscle_mass} <span className="text-[10px] font-semibold text-emerald-500/80">%</span></span>
+                            </div>
+                          )}
+
+                          {/* 5. Metab. Basal */}
+                          {m.bmr && m.bmr > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">5. Metab. Basal</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.bmr} <span className="text-[10px] font-semibold text-emerald-500/80">kcal</span></span>
+                            </div>
+                          )}
+
+                          {/* 6. Edad Corporal */}
+                          {m.body_age && m.body_age > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">6. Edad Corp.</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.body_age} <span className="text-[10px] font-semibold text-emerald-500/80">años</span></span>
+                            </div>
+                          )}
+
+                          {/* 7. Grasa Visceral */}
+                          {m.visceral_fat && m.visceral_fat > 0 && (
+                            <div className="bg-slate-950/40 border border-slate-800/60 rounded-xl p-2 flex flex-col justify-center">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">7. Grasa Visc.</span>
+                              <span className="text-xs font-extrabold text-emerald-400 mt-0.5">{m.visceral_fat}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}

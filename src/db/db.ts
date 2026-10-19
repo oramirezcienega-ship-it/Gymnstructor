@@ -33,6 +33,7 @@ export interface LocalExercise {
   series: number;
   reps: number;
   weight: number;
+  order_index?: number; // Orden posicional de ejecución
   deleted: number; // 0 = false, 1 = true
   created_at: string;
   updated_at: string;
@@ -56,11 +57,12 @@ export interface LocalBodyMetric {
   id: string;
   user_id: string;
   weight: number;
+  bmi?: number; // IMC / BMI
   body_fat: number;
   muscle_mass: number;
-  bmr?: number; // Metabolismo basal (kcal)
-  visceral_fat?: number; // Grasa visceral
-  body_age?: number; // Edad corporal
+  bmr?: number; // Metabolismo basal / RM kcal
+  body_age?: number; // Edad corporal / Body Age
+  visceral_fat?: number; // Grasa visceral / Visceral Fat
   logged_at: string;
   deleted: number; // 0 = false, 1 = true
   created_at: string;

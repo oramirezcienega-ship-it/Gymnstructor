@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS public.exercises (
     series INTEGER NOT NULL DEFAULT 3,
     reps INTEGER NOT NULL DEFAULT 10,
     weight NUMERIC NOT NULL DEFAULT 0.0,
+    order_index INTEGER DEFAULT 0,
     deleted BOOLEAN DEFAULT false NOT NULL,
     image_data TEXT, -- Imagen codificada en base64 para soporte offline completo
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
@@ -56,8 +57,12 @@ CREATE TABLE IF NOT EXISTS public.body_metrics (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
     weight NUMERIC NOT NULL,
+    bmi NUMERIC DEFAULT 0.0,
     body_fat NUMERIC DEFAULT 0.0,
     muscle_mass NUMERIC DEFAULT 0.0,
+    bmr NUMERIC DEFAULT 0.0,
+    body_age NUMERIC DEFAULT 0.0,
+    visceral_fat NUMERIC DEFAULT 0.0,
     logged_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     deleted BOOLEAN DEFAULT false NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
@@ -101,5 +106,13 @@ CREATE TABLE IF NOT EXISTS public.community_exercises (
     weight NUMERIC NOT NULL DEFAULT 0.0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Migraciones complementarias (ejecutar si la tabla body_metrics o exercises ya existían en la base de datos)
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS bmi NUMERIC DEFAULT 0.0;
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS bmr NUMERIC DEFAULT 0.0;
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS visceral_fat NUMERIC DEFAULT 0.0;
+ALTER TABLE public.body_metrics ADD COLUMN IF NOT EXISTS body_age NUMERIC DEFAULT 0.0;
+ALTER TABLE public.exercises ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
+
 
 

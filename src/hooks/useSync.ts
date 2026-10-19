@@ -40,32 +40,19 @@ export function useSync(
       setPendingCount(0);
       return;
     }
-    const pProfiles = await db.profiles.where('id').equals(currentUserId).and(p => p.synced === 0).count();
-    const pRoutines = await db.routines.where('user_id').equals(currentUserId).and(r => r.synced === 0).count();
-    
-    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
-    const routineIds = userRoutines.map(r => r.id);
-    
-    let pExercises = 0;
-    let pLogs = 0;
-    
-    if (routineIds.length > 0) {
-      pExercises = await db.exercises.where('synced').equals(0).and(ex => routineIds.includes(ex.routine_id)).count();
-      
-      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
-      const exerciseIds = userExercises.map(ex => ex.id);
-      if (exerciseIds.length > 0) {
-        pLogs = await db.workout_logs.where('synced').equals(0).and(log => exerciseIds.includes(log.exercise_id)).count();
-      }
-    }
-    
-    const pMetrics = await db.body_metrics.where('user_id').equals(currentUserId).and(m => m.synced === 0).count();
+    const pProfiles = await db.profiles.where('synced').equals(0).count();
+    const pRoutines = await db.routines.where('synced').equals(0).count();
+    const pExercises = await db.exercises.where('synced').equals(0).count();
+    const pLogs = await db.workout_logs.where('synced').equals(0).count();
+    const pMetrics = await db.body_metrics.where('synced').equals(0).count();
+
     setPendingCount(pProfiles + pRoutines + pExercises + pLogs + pMetrics);
   }, [currentUserId]);
 
   // Subir cambios locales del usuario actual a Supabase
   const pushLocalChanges = useCallback(async () => {
     if (!currentUserId) return;
+    const errors: string[] = [];
 
     // 1. Sincronizar perfiles
     const unsyncedProfiles = await db.profiles
@@ -83,6 +70,7 @@ export function useSync(
 
       if (getError) {
         console.error('Error fetching server profile:', getError);
+        errors.push(`Perfil (obtener): ${getError.message}`);
         continue;
       }
 
@@ -97,11 +85,14 @@ export function useSync(
             name: profile.name || '',
             height: profile.height,
             gender: profile.gender,
-            birth_date: profile.birth_date,
+            birth_date: profile.birth_date || null,
             updated_at: profile.updated_at,
           });
           if (!upsertError) success = true;
-          else console.error('Error upserting profile:', upsertError);
+          else {
+            console.error('Error upserting profile:', upsertError);
+            errors.push(`Perfil (actualizar): ${upsertError.message}`);
+          }
         } else {
           await db.profiles.put({ ...serverProfile, synced: 1 });
           success = true;
@@ -113,12 +104,15 @@ export function useSync(
           name: profile.name || '',
           height: profile.height,
           gender: profile.gender,
-          birth_date: profile.birth_date,
+          birth_date: profile.birth_date || null,
           created_at: profile.created_at,
           updated_at: profile.updated_at,
         });
         if (!insertError) success = true;
-        else console.error('Error inserting profile:', insertError);
+        else {
+          console.error('Error inserting profile:', insertError);
+          errors.push(`Perfil (insertar): ${insertError.message}`);
+        }
       }
 
       if (success) {
@@ -142,6 +136,7 @@ export function useSync(
 
       if (getError) {
         console.error('Error fetching server routine:', getError);
+        errors.push(`Rutina (obtener): ${getError.message}`);
         continue;
       }
 
@@ -159,7 +154,10 @@ export function useSync(
             updated_at: routine.updated_at,
           });
           if (!upsertError) success = true;
-          else console.error('Error upserting routine:', upsertError);
+          else {
+            console.error('Error upserting routine:', upsertError);
+            errors.push(`Rutina (actualizar): ${upsertError.message}`);
+          }
         } else {
           await db.routines.put({
             ...serverRoutine,
@@ -179,7 +177,10 @@ export function useSync(
           updated_at: routine.updated_at,
         });
         if (!insertError) success = true;
-        else console.error('Error inserting routine:', insertError);
+        else {
+          console.error('Error inserting routine:', insertError);
+          errors.push(`Rutina (insertar): ${insertError.message}`);
+        }
       }
 
       if (success) {
@@ -191,17 +192,11 @@ export function useSync(
       }
     }
 
-    // Obtener rutinas de este usuario para sincronizar ejercicios y logs relacionados
-    const userRoutines = await db.routines.where('user_id').equals(currentUserId).toArray();
-    const routineIds = userRoutines.map(r => r.id);
-
     // 3. Sincronizar ejercicios
-    if (routineIds.length > 0) {
-      const unsyncedExercises = await db.exercises
-        .where('synced')
-        .equals(0)
-        .and(ex => routineIds.includes(ex.routine_id))
-        .toArray();
+    const unsyncedExercises = await db.exercises
+      .where('synced')
+      .equals(0)
+      .toArray();
 
       for (const exercise of unsyncedExercises) {
         const { data: serverExercise, error: getError } = await supabase
@@ -212,6 +207,7 @@ export function useSync(
 
         if (getError) {
           console.error('Error fetching server exercise:', getError);
+          errors.push(`Ejercicio (obtener): ${getError.message}`);
           continue;
         }
 
@@ -228,12 +224,16 @@ export function useSync(
               series: exercise.series,
               reps: exercise.reps,
               weight: exercise.weight,
+              order_index: exercise.order_index,
               deleted: exercise.deleted === 1,
               updated_at: exercise.updated_at,
               image_data: exercise.image_data,
             });
             if (!upsertError) success = true;
-            else console.error('Error upserting exercise:', upsertError);
+            else {
+              console.error('Error upserting exercise:', upsertError);
+              errors.push(`Ejercicio (actualizar): ${upsertError.message}`);
+            }
           } else {
             await db.exercises.put({
               ...serverExercise,
@@ -251,13 +251,17 @@ export function useSync(
             series: exercise.series,
             reps: exercise.reps,
             weight: exercise.weight,
+            order_index: exercise.order_index,
             deleted: exercise.deleted === 1,
             created_at: exercise.created_at,
             updated_at: exercise.updated_at,
             image_data: exercise.image_data,
           });
           if (!insertError) success = true;
-          else console.error('Error inserting exercise:', insertError);
+          else {
+            console.error('Error inserting exercise:', insertError);
+            errors.push(`Ejercicio (insertar): ${insertError.message}`);
+          }
         }
 
         if (success) {
@@ -269,16 +273,11 @@ export function useSync(
         }
       }
 
-      // 4. Sincronizar registros de entrenamiento (Workout Logs)
-      const userExercises = await db.exercises.where('routine_id').anyOf(routineIds).toArray();
-      const exerciseIds = userExercises.map(ex => ex.id);
-
-      if (exerciseIds.length > 0) {
-        const unsyncedLogs = await db.workout_logs
-          .where('synced')
-          .equals(0)
-          .and(log => exerciseIds.includes(log.exercise_id))
-          .toArray();
+    // 4. Sincronizar registros de entrenamiento (Workout Logs)
+    const unsyncedLogs = await db.workout_logs
+      .where('synced')
+      .equals(0)
+      .toArray();
 
         for (const log of unsyncedLogs) {
           const { data: serverLog, error: getError } = await supabase
@@ -289,6 +288,7 @@ export function useSync(
 
           if (getError) {
             console.error('Error fetching server workout log:', getError);
+            errors.push(`Registro de entreno (obtener): ${getError.message}`);
             continue;
           }
 
@@ -307,7 +307,10 @@ export function useSync(
                 updated_at: log.updated_at,
               });
               if (!upsertError) success = true;
-              else console.error('Error upserting workout log:', upsertError);
+              else {
+                console.error('Error upserting workout log:', upsertError);
+                errors.push(`Registro de entreno (actualizar): ${upsertError.message}`);
+              }
             } else {
               await db.workout_logs.put({
                 ...serverLog,
@@ -328,7 +331,10 @@ export function useSync(
               updated_at: log.updated_at,
             });
             if (!insertError) success = true;
-            else console.error('Error inserting workout log:', insertError);
+            else {
+              console.error('Error inserting workout log:', insertError);
+              errors.push(`Registro de entreno (insertar): ${insertError.message}`);
+            }
           }
 
           if (success) {
@@ -339,14 +345,11 @@ export function useSync(
             }
           }
         }
-      }
-    }
 
     // 5. Sincronizar métricas corporales (Body Metrics)
     const unsyncedMetrics = await db.body_metrics
-      .where('user_id')
-      .equals(currentUserId)
-      .and(m => m.synced === 0)
+      .where('synced')
+      .equals(0)
       .toArray();
 
     for (const metric of unsyncedMetrics) {
@@ -358,6 +361,7 @@ export function useSync(
 
       if (getError) {
         console.error('Error fetching server body metric:', getError);
+        errors.push(`Métricas corporales (obtener): ${getError.message}`);
         continue;
       }
 
@@ -370,17 +374,21 @@ export function useSync(
             id: metric.id,
             user_id: metric.user_id,
             weight: metric.weight,
-            body_fat: metric.body_fat,
-            muscle_mass: metric.muscle_mass,
-            bmr: metric.bmr,
-            visceral_fat: metric.visceral_fat,
-            body_age: metric.body_age,
+            bmi: metric.bmi || 0,
+            body_fat: metric.body_fat || 0,
+            muscle_mass: metric.muscle_mass || 0,
+            bmr: metric.bmr || 0,
+            body_age: metric.body_age || 0,
+            visceral_fat: metric.visceral_fat || 0,
             logged_at: metric.logged_at,
             deleted: metric.deleted === 1,
             updated_at: metric.updated_at,
           });
           if (!upsertError) success = true;
-          else console.error('Error upserting body metric:', upsertError);
+          else {
+            console.error('Error upserting body metric:', upsertError);
+            errors.push(`Métricas corporales (actualizar): ${upsertError.message}`);
+          }
         } else {
           await db.body_metrics.put({
             ...serverMetric,
@@ -394,18 +402,22 @@ export function useSync(
           id: metric.id,
           user_id: metric.user_id,
           weight: metric.weight,
-          body_fat: metric.body_fat,
-          muscle_mass: metric.muscle_mass,
-          bmr: metric.bmr,
-          visceral_fat: metric.visceral_fat,
-          body_age: metric.body_age,
+          bmi: metric.bmi || 0,
+          body_fat: metric.body_fat || 0,
+          muscle_mass: metric.muscle_mass || 0,
+          bmr: metric.bmr || 0,
+          body_age: metric.body_age || 0,
+          visceral_fat: metric.visceral_fat || 0,
           logged_at: metric.logged_at,
           deleted: metric.deleted === 1,
           created_at: metric.created_at,
           updated_at: metric.updated_at,
         });
         if (!insertError) success = true;
-        else console.error('Error inserting body metric:', insertError);
+        else {
+          console.error('Error inserting body metric:', insertError);
+          errors.push(`Métricas corporales (insertar): ${insertError.message}`);
+        }
       }
 
       if (success) {
@@ -416,6 +428,10 @@ export function useSync(
         }
       }
     }
+
+    if (errors.length > 0) {
+      throw new Error(`Errores al subir cambios locales: ${errors.join('; ')}`);
+    }
   }, [currentUserId]);
 
   // Descargar cambios desde el servidor
@@ -425,6 +441,7 @@ export function useSync(
     const lastSyncKey = `last_sync_timestamp_${currentUserId}`;
     const lastSync = localStorage.getItem(lastSyncKey) || new Date(0).toISOString();
     const currentSyncTime = new Date().toISOString();
+    const errors: string[] = [];
 
     // 1. Descargar perfiles (sólo del usuario actual)
     const { data: serverProfiles, error: pullError } = await supabase
@@ -435,6 +452,7 @@ export function useSync(
 
     if (pullError) {
       console.error('Error pulling server profiles:', pullError);
+      errors.push(`Descarga de perfiles: ${pullError.message}`);
     } else if (serverProfiles) {
       for (const sProfile of serverProfiles) {
         const local = await db.profiles.get(sProfile.id);
@@ -445,13 +463,16 @@ export function useSync(
     }
 
     // 2. Descargar rutinas
-    const { data: serverRoutines } = await supabase
+    const { data: serverRoutines, error: routinesError } = await supabase
       .from('routines')
       .select('*')
       .eq('user_id', currentUserId)
       .gt('updated_at', lastSync);
 
-    if (serverRoutines) {
+    if (routinesError) {
+      console.error('Error pulling server routines:', routinesError);
+      errors.push(`Descarga de rutinas: ${routinesError.message}`);
+    } else if (serverRoutines) {
       for (const sRoutine of serverRoutines) {
         const local = await db.routines.get(sRoutine.id);
         if (!local || local.synced === 1 || new Date(sRoutine.updated_at).getTime() > new Date(local.updated_at).getTime()) {
@@ -479,13 +500,16 @@ export function useSync(
 
     // 3. Descargar ejercicios relacionados con las rutinas del usuario
     if (routineIds.length > 0) {
-      const { data: serverExercises } = await supabase
+      const { data: serverExercises, error: exercisesError } = await supabase
         .from('exercises')
         .select('*')
         .in('routine_id', routineIds)
         .gt('updated_at', lastSync);
 
-      if (serverExercises) {
+      if (exercisesError) {
+        console.error('Error pulling server exercises:', exercisesError);
+        errors.push(`Descarga de ejercicios: ${exercisesError.message}`);
+      } else if (serverExercises) {
         for (const sExercise of serverExercises) {
           const local = await db.exercises.get(sExercise.id);
           if (!local || local.synced === 1 || new Date(sExercise.updated_at).getTime() > new Date(local.updated_at).getTime()) {
@@ -500,6 +524,7 @@ export function useSync(
                 series: sExercise.series,
                 reps: sExercise.reps,
                 weight: Number(sExercise.weight),
+                order_index: sExercise.order_index !== undefined ? sExercise.order_index : 0,
                 deleted: 0,
                 created_at: sExercise.created_at,
                 updated_at: sExercise.updated_at,
@@ -516,13 +541,16 @@ export function useSync(
       const exerciseIds = userExercises.map(ex => ex.id);
 
       if (exerciseIds.length > 0) {
-        const { data: serverLogs } = await supabase
+        const { data: serverLogs, error: logsError } = await supabase
           .from('workout_logs')
           .select('*')
           .in('exercise_id', exerciseIds)
           .gt('updated_at', lastSync);
 
-        if (serverLogs) {
+        if (logsError) {
+          console.error('Error pulling server workout logs:', logsError);
+          errors.push(`Descarga de registros de entrenamiento: ${logsError.message}`);
+        } else if (serverLogs) {
           for (const sLog of serverLogs) {
             const local = await db.workout_logs.get(sLog.id);
             if (!local || local.synced === 1 || new Date(sLog.updated_at).getTime() > new Date(local.updated_at).getTime()) {
@@ -548,13 +576,16 @@ export function useSync(
     }
 
     // 5. Descargar métricas corporales
-    const { data: serverMetrics } = await supabase
+    const { data: serverMetrics, error: metricsError } = await supabase
       .from('body_metrics')
       .select('*')
       .eq('user_id', currentUserId)
       .gt('updated_at', lastSync);
 
-    if (serverMetrics) {
+    if (metricsError) {
+      console.error('Error pulling server body metrics:', metricsError);
+      errors.push(`Descarga de métricas corporales: ${metricsError.message}`);
+    } else if (serverMetrics) {
       for (const sMetric of serverMetrics) {
         const local = await db.body_metrics.get(sMetric.id);
         if (!local || local.synced === 1 || new Date(sMetric.updated_at).getTime() > new Date(local.updated_at).getTime()) {
@@ -565,11 +596,12 @@ export function useSync(
               id: sMetric.id,
               user_id: sMetric.user_id,
               weight: Number(sMetric.weight),
+              bmi: sMetric.bmi ? Number(sMetric.bmi) : undefined,
               body_fat: Number(sMetric.body_fat),
               muscle_mass: Number(sMetric.muscle_mass),
               bmr: sMetric.bmr ? Number(sMetric.bmr) : undefined,
-              visceral_fat: sMetric.visceral_fat ? Number(sMetric.visceral_fat) : undefined,
               body_age: sMetric.body_age ? Number(sMetric.body_age) : undefined,
+              visceral_fat: sMetric.visceral_fat ? Number(sMetric.visceral_fat) : undefined,
               logged_at: sMetric.logged_at,
               deleted: 0,
               created_at: sMetric.created_at,
@@ -579,6 +611,10 @@ export function useSync(
           }
         }
       }
+    }
+
+    if (errors.length > 0) {
+      throw new Error(`Errores al descargar datos del servidor: ${errors.join('; ')}`);
     }
 
     localStorage.setItem(lastSyncKey, currentSyncTime);
@@ -621,10 +657,12 @@ export function useSync(
   }, [currentUserId]);
 
   // Función principal de disparo de sincronización
-  const triggerSync = useCallback(async () => {
-    if (!navigator.onLine || isSyncing || !currentUserId) return;
+  const triggerSync = useCallback(async (force = false) => {
+    if (!navigator.onLine || (!force && isSyncing) || !currentUserId) return;
     setIsSyncing(true);
-    setSyncError(null);
+    if (force) {
+      setSyncError(null);
+    }
     try {
       await forceResetSyncStatus();
       await ensureUserProfile();
@@ -634,9 +672,12 @@ export function useSync(
       await pullServerChanges();
       // 3. Actualizar conteo
       await updatePendingCount();
+      // Limpiar error si todo se completó correctamente
+      setSyncError(null);
     } catch (error: any) {
       console.error('Error durante la sincronización:', error);
-      setSyncError(error.message || 'Error desconocido de sincronización');
+      const errMsg = error?.message || String(error) || 'Error desconocido de sincronización';
+      setSyncError(errMsg);
     } finally {
       setIsSyncing(false);
     }
@@ -648,7 +689,7 @@ export function useSync(
 
     const handleOnline = () => {
       setIsOnline(true);
-      triggerSync();
+      triggerSync(true);
     };
     const handleOffline = () => setIsOnline(false);
 
@@ -666,7 +707,8 @@ export function useSync(
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [currentUserId, ensureUserProfile, updatePendingCount, triggerSync]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
 
   return { isOnline, isSyncing, pendingCount, syncError, triggerSync, updatePendingCount };
 }
