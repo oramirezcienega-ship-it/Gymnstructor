@@ -5,6 +5,7 @@ import type { LocalRoutine, LocalExercise, LocalWorkoutLog } from './db/db';
 import { useSync } from './hooks/useSync';
 import { supabase } from './supabaseClient';
 import { ProgressView } from './components/ProgressView';
+import { WorkoutHistoryView } from './components/WorkoutHistoryView';
 import {
   Dumbbell,
   Plus,
@@ -1483,7 +1484,7 @@ function App() {
 
       {/* CUERPO PRINCIPAL */}
       <main className={`flex-1 px-4 py-6 mx-auto w-full transition-all duration-300 ${
-        view === 'progress' ? 'max-w-7xl sm:px-6 lg:px-8' : 'max-w-xl'
+        view === 'progress' || view === 'history' ? 'max-w-7xl sm:px-6 lg:px-8' : 'max-w-xl'
       }`}>
 
         {/* 1. DASHBOARD VIEW */}
@@ -2116,73 +2117,15 @@ function App() {
 
         {/* 4. HISTORIAL VIEW */}
         {view === 'history' && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setView('dashboard')} 
-                className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-              <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
-                <Calendar className="w-5 h-5 text-emerald-400" /> Historial de Entrenamientos
-              </h2>
-            </div>
-
-            {userWorkoutLogs && userWorkoutLogs.length > 0 ? (
-              <div className="space-y-4">
-                {/* Agrupar logs por día */}
-                {Array.from(new Set(userWorkoutLogs.map(log => formatDate(log.logged_at)))).reverse().map(dateString => {
-                  const dateLogs = userWorkoutLogs.filter(log => formatDate(log.logged_at) === dateString);
-                  
-                  return (
-                    <div key={dateString} className="glass-card rounded-2xl p-4 border border-slate-900 space-y-3">
-                      {/* Fecha cabecera */}
-                      <div className="flex justify-between items-center pb-2 border-b border-slate-900">
-                        <span className="font-bold text-white text-sm">{dateString}</span>
-                        <span className="text-[10px] text-slate-400 font-semibold bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
-                          {dateLogs.length} series registradas
-                        </span>
-                      </div>
-
-                      {/* Lista de series del día */}
-                      <div className="space-y-2">
-                        {dateLogs.map(log => {
-                          const associatedExercise = exercises?.find(ex => ex.id === log.exercise_id);
-                          return (
-                            <div key={log.id} className="flex justify-between items-center text-xs">
-                              <div>
-                                <span className="font-semibold text-slate-300">
-                                  {associatedExercise ? associatedExercise.name : 'Ejercicio Eliminado'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="text-slate-400 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-900/60">
-                                  {log.weight_lifted} lb
-                                </span>
-                                <span className="text-slate-500 font-medium">
-                                  {log.reps_done} reps
-                                </span>
-                                {log.synced === 0 && (
-                                  <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" title="Sincronización pendiente"></span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="glass-card rounded-3xl p-8 border border-slate-900 text-center">
-                <Calendar className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                <p className="text-sm text-slate-400">No hay entrenamientos completados aún.</p>
-                <p className="text-xs text-slate-500 mt-1">Completa una rutina en el Dashboard para ver tus registros aquí.</p>
-              </div>
-            )}
-          </div>
+          <WorkoutHistoryView
+            workoutLogs={userWorkoutLogs}
+            exercises={exercises}
+            routines={routines}
+            onBack={() => setView('dashboard')}
+            onStartWorkoutWithRoutine={handleStartWorkout}
+            triggerSync={triggerSync}
+            isOnline={isOnline}
+          />
         )}
 
         {/* 5. MI PROGRESO VIEW */}
