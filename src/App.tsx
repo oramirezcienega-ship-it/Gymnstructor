@@ -793,16 +793,28 @@ function App() {
     }
   };
 
-  // Autocarga de la rutina solicitada "Espalda y bíceps" si aún no existe en el perfil del usuario
+  // Autocarga de las rutinas solicitadas ("Espalda y bíceps" y "Pecho y tríceps") si aún no existen
   useEffect(() => {
     if (!currentUserId || !routines) return;
+
+    // 1. Espalda y bíceps
     const hasBackBiceps = routines.some(r =>
       r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps'))
     );
-    const key = `auto_loaded_espalda_biceps_${currentUserId}`;
-    if (!hasBackBiceps && !localStorage.getItem(key)) {
-      localStorage.setItem(key, 'true');
+    const keyBack = `auto_loaded_espalda_biceps_${currentUserId}`;
+    if (!hasBackBiceps && !localStorage.getItem(keyBack)) {
+      localStorage.setItem(keyBack, 'true');
       generateTemplateRoutine('EspaldaBiceps');
+    }
+
+    // 2. Pecho y tríceps
+    const hasChestTriceps = routines.some(r =>
+      r.name.toLowerCase().includes('pecho') && (r.name.toLowerCase().includes('tríceps') || r.name.toLowerCase().includes('triceps'))
+    );
+    const keyChest = `auto_loaded_pecho_triceps_${currentUserId}`;
+    if (!hasChestTriceps && !localStorage.getItem(keyChest)) {
+      localStorage.setItem(keyChest, 'true');
+      generateTemplateRoutine('PechoTriceps');
     }
   }, [currentUserId, routines]);
 
