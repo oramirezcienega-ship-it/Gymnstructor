@@ -999,6 +999,110 @@ function App() {
     }
   }, [currentUserId, routines]);
 
+  // Deduplicación automática de rutinas: deja únicamente la más completa con descripción y ejercicios reales
+  useEffect(() => {
+    if (!currentUserId || !routines || routines.length === 0 || !exercises) return;
+
+    // 1. Limpieza de Espalda y Bíceps
+    const backBicepsRoutines = routines.filter(r => {
+      const name = r.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return name.includes('espalda') && name.includes('bicep');
+    });
+
+    if (backBicepsRoutines.length > 1) {
+      const scored = backBicepsRoutines.map(routine => {
+        const rExs = exercises.filter(ex => ex.routine_id === routine.id && ex.deleted === 0);
+        let score = 0;
+        // Bonificación por descripción detallada
+        if (routine.description && routine.description.trim().length > 10 && !routine.description.includes('Sin descripción')) {
+          score += 100;
+        }
+        score += rExs.length * 10;
+        // Bonificación por ejercicios genuinos de espalda y bíceps
+        rExs.forEach(ex => {
+          const m = (ex.muscle_group || '').toLowerCase();
+          const n = (ex.name || '').toLowerCase();
+          if (m.includes('espalda') || m.includes('bicep') || n.includes('jalon') || n.includes('remo') || n.includes('curl')) {
+            score += 15;
+          }
+          if (ex.weight && ex.weight > 0) score += 5;
+        });
+        return { routine, score, exercises: rExs };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      // Conservamos la más completa (mayor puntaje) y eliminamos las duplicadas/incompletas
+      const duplicatesToDelete = scored.slice(1);
+      const now = new Date().toISOString();
+
+      duplicatesToDelete.forEach(async ({ routine, exercises: rExs }) => {
+        await db.routines.update(routine.id, {
+          deleted: 1,
+          synced: 0,
+          updated_at: now
+        });
+        for (const ex of rExs) {
+          await db.exercises.update(ex.id, {
+            deleted: 1,
+            synced: 0,
+            updated_at: now
+          });
+        }
+      });
+
+      if (isOnline) triggerSync();
+    }
+
+    // 2. Limpieza de Pecho y Tríceps duplicadas (si aplica)
+    const chestTricepsRoutines = routines.filter(r => {
+      const name = r.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return name.includes('pecho') && name.includes('tricep');
+    });
+
+    if (chestTricepsRoutines.length > 1) {
+      const scoredChest = chestTricepsRoutines.map(routine => {
+        const rExs = exercises.filter(ex => ex.routine_id === routine.id && ex.deleted === 0);
+        let score = 0;
+        if (routine.description && routine.description.trim().length > 10 && !routine.description.includes('Sin descripción')) {
+          score += 100;
+        }
+        score += rExs.length * 10;
+        rExs.forEach(ex => {
+          const m = (ex.muscle_group || '').toLowerCase();
+          const n = (ex.name || '').toLowerCase();
+          if (m.includes('pecho') || m.includes('tricep') || n.includes('banca') || n.includes('press') || n.includes('cable')) {
+            score += 15;
+          }
+          if (ex.weight && ex.weight > 0) score += 5;
+        });
+        return { routine, score, exercises: rExs };
+      });
+
+      scoredChest.sort((a, b) => b.score - a.score);
+
+      const duplicatesChest = scoredChest.slice(1);
+      const now = new Date().toISOString();
+
+      duplicatesChest.forEach(async ({ routine, exercises: rExs }) => {
+        await db.routines.update(routine.id, {
+          deleted: 1,
+          synced: 0,
+          updated_at: now
+        });
+        for (const ex of rExs) {
+          await db.exercises.update(ex.id, {
+            deleted: 1,
+            synced: 0,
+            updated_at: now
+          });
+        }
+      });
+
+      if (isOnline) triggerSync();
+    }
+  }, [currentUserId, routines, exercises, isOnline, triggerSync]);
+
   // --- CRUD ACCIONES ---
   const handleOpenCreateRoutine = () => {
     setActiveRoutine(null);
