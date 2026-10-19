@@ -49,7 +49,7 @@ interface SavedActiveWorkout {
   userId?: string;
   routine: LocalRoutine;
   sessionLogs: {
-    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
+    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean; logId?: string; loggedAt?: string }[];
   };
   exercises: LocalExercise[];
   startedAt?: string;
@@ -198,7 +198,7 @@ function App() {
     return getSavedActiveWorkout()?.routine || null;
   });
   const [workoutSessionLogs, setWorkoutSessionLogs] = useState<{
-    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
+    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean; logId?: string; loggedAt?: string }[];
   }>(() => {
     return getSavedActiveWorkout()?.sessionLogs || {};
   });
@@ -1097,29 +1097,108 @@ function App() {
     setView('workout');
   };
 
-  const handleToggleWorkoutSeries = (exerciseId: string, seriesIndex: number) => {
+  const handleToggleWorkoutSeries = async (exerciseId: string, seriesIndex: number) => {
     const copy = { ...workoutSessionLogs };
-    const series = copy[exerciseId][seriesIndex];
-    series.completed = !series.completed;
+    const list = copy[exerciseId] ? [...copy[exerciseId]] : [];
+    if (!list[seriesIndex]) return;
+
+    const series = { ...list[seriesIndex] };
+    const willBeCompleted = !series.completed;
+    series.completed = willBeCompleted;
+
+    const now = new Date().toISOString();
+
+    if (willBeCompleted) {
+      // Asignar logId y timestamp si no existen
+      const logId = series.logId || generateUUID();
+      const loggedAt = series.loggedAt || now;
+      series.logId = logId;
+      series.loggedAt = loggedAt;
+
+      // Registrar inmediatamente el avance de la serie en la base de datos (db.workout_logs)
+      const logData: LocalWorkoutLog = {
+        id: logId,
+        exercise_id: exerciseId,
+        weight_lifted: Number(series.weight) || 0,
+        reps_done: Number(series.reps) || 0,
+        logged_at: loggedAt,
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      };
+      await db.workout_logs.put(logData);
+
+      // Progresión de carga: actualizar peso y reps sugeridas en el ejercicio para futuras sesiones
+      if (Number(series.weight) > 0) {
+        await db.exercises.update(exerciseId, {
+          weight: Number(series.weight),
+          reps: Number(series.reps),
+          updated_at: now,
+          synced: 0
+        });
+      }
+
+      // Sincronización en segundo plano con Supabase si estamos online
+      if (isOnline) {
+        triggerSync();
+      }
+    } else {
+      // Si el usuario desmarca la serie, marcar como borrado en db.workout_logs
+      if (series.logId) {
+        await db.workout_logs.update(series.logId, {
+          deleted: 1,
+          updated_at: now,
+          synced: 0
+        });
+        if (isOnline) {
+          triggerSync();
+        }
+      }
+    }
+
+    list[seriesIndex] = series;
+    copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
   };
 
-  const handleWorkoutValueChange = (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
+  const handleWorkoutValueChange = async (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
     const copy = { ...workoutSessionLogs };
-    copy[exerciseId][seriesIndex][field] = value;
+    const list = copy[exerciseId] ? [...copy[exerciseId]] : [];
+    if (!list[seriesIndex]) return;
+
+    const series = { ...list[seriesIndex] };
+    series[field] = value;
+    list[seriesIndex] = series;
+    copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
+
+    // Si la serie ya estaba completada y registrada en BD, actualizar el log inmediatamente
+    if (series.completed && series.logId) {
+      const now = new Date().toISOString();
+      const numVal = field === 'weight' ? (parseFloat(value) || 0) : (parseInt(value) || 0);
+      await db.workout_logs.update(series.logId, {
+        [field === 'weight' ? 'weight_lifted' : 'reps_done']: numVal,
+        updated_at: now,
+        synced: 0
+      });
+      if (isOnline) {
+        triggerSync();
+      }
+    }
   };
 
   const handlePropagateSeriesValue = (exerciseId: string, fromSeriesIndex: number, field: 'weight' | 'reps', value: number) => {
     const copy = { ...workoutSessionLogs };
-    const list = copy[exerciseId];
+    const list = copy[exerciseId] ? [...copy[exerciseId]] : [];
     if (!list) return;
 
     for (let i = fromSeriesIndex + 1; i < list.length; i++) {
       if (!list[i].completed) {
-        list[i][field] = value;
+        list[i] = { ...list[i], [field]: value };
       }
     }
+    copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
   };
 
@@ -1129,7 +1208,7 @@ function App() {
 
     let logsAdded = 0;
 
-    // Registrar logs de series completadas y actualizar peso de ejercicio para siguientes sesiones
+    // Asegurar que todas las series completadas estén en db.workout_logs y actualizar peso de ejercicio
     for (const exerciseId of Object.keys(workoutSessionLogs)) {
       const seriesList = workoutSessionLogs[exerciseId];
       let maxWeightUsed = 0;
@@ -1139,19 +1218,19 @@ function App() {
       const completedSeries = seriesList.filter(s => s.completed);
       
       for (const s of completedSeries) {
-        const logId = generateUUID();
+        const logId = s.logId || generateUUID();
         const logData: LocalWorkoutLog = {
           id: logId,
           exercise_id: exerciseId,
-          weight_lifted: s.weight,
-          reps_done: s.reps,
-          logged_at: now,
+          weight_lifted: Number(s.weight) || 0,
+          reps_done: Number(s.reps) || 0,
+          logged_at: s.loggedAt || now,
           deleted: 0,
           created_at: now,
           updated_at: now,
           synced: 0
         };
-        await db.workout_logs.add(logData);
+        await db.workout_logs.put(logData);
         logsAdded++;
 
         if (s.weight > maxWeightUsed) {
@@ -1181,7 +1260,7 @@ function App() {
     }
 
     if (logsAdded === 0) {
-      alert('Registra al menos una serie completa para guardar el entrenamiento.');
+      alert('Registra al menos una serie completada para guardar el entrenamiento.');
       return;
     }
 
@@ -2043,17 +2122,29 @@ function App() {
                 </button>
                 <button
                   onClick={() => {
-                    if (confirm('¿Deseas cancelar el entrenamiento actual? No se guardará el historial.')) {
-                      localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
-                      setWorkoutRoutine(null);
-                      setWorkoutSessionLogs({});
-                      setWorkoutExercises([]);
-                      setView('dashboard');
+                    const hasCompleted = Object.values(workoutSessionLogs).flat().some(s => s.completed);
+                    if (hasCompleted) {
+                      if (confirm('¿Deseas salir del entrenamiento actual?\n\nLas series que ya completaste quedarán guardadas en tu historial.')) {
+                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+                        setWorkoutRoutine(null);
+                        setWorkoutSessionLogs({});
+                        setWorkoutExercises([]);
+                        setView('dashboard');
+                        if (isOnline) triggerSync();
+                      }
+                    } else {
+                      if (confirm('¿Deseas cancelar el entrenamiento actual?')) {
+                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+                        setWorkoutRoutine(null);
+                        setWorkoutSessionLogs({});
+                        setWorkoutExercises([]);
+                        setView('dashboard');
+                      }
                     }
                   }}
                   className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
                 >
-                  Cancelar
+                  Salir
                 </button>
               </div>
             </div>
