@@ -29,6 +29,8 @@ import {
   Lock,
   User,
   Camera,
+  Search,
+  Layers,
   Image as ImageIcon
 } from 'lucide-react';
 
@@ -41,6 +43,26 @@ const getExerciseImage = (name: string): string | null => {
     return '/exercises/sentadilla.png';
   }
   return null;
+};
+
+const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): string => {
+  const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase();
+  if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('gluteo') || norm.includes('pantorrilla')) return 'Piernas';
+  if (norm.includes('empuje') || norm.includes('push') || norm.includes('pecho') || norm.includes('tricep') || norm.includes('trícep')) return 'Empuje / Pecho';
+  if (norm.includes('jalon') || norm.includes('jalón') || norm.includes('pull') || norm.includes('espalda') || norm.includes('bicep') || norm.includes('bícep')) return 'Jalón / Espalda';
+  if (norm.includes('hombro') || norm.includes('militar')) return 'Hombros';
+  if (norm.includes('full') || norm.includes('cuerpo')) return 'Full Body';
+  
+  if (rExercises.length > 0) {
+    const counts: Record<string, number> = {};
+    rExercises.forEach(e => {
+      const g = e.muscle_group || 'General';
+      counts[g] = (counts[g] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length > 0) return sorted[0][0];
+  }
+  return 'General';
 };
 
 const ACTIVE_WORKOUT_STORAGE_KEY = 'gymstructor_active_workout_session';
@@ -215,6 +237,10 @@ function App() {
 
   // Estado para expandir/colapsar plantillas de ejercicios en el Dashboard
   const [isTemplatesExpanded, setIsTemplatesExpanded] = useState<boolean>(false);
+
+  // Estados para búsqueda y filtrado de rutinas en Dashboard
+  const [routineSearchQuery, setRoutineSearchQuery] = useState<string>('');
+  const [routineMuscleFilter, setRoutineMuscleFilter] = useState<string>('Todas');
 
   // Helper para generar UUIDs locales (con fallback para contextos HTTP no seguros)
   const generateUUID = () => {
@@ -1661,192 +1687,461 @@ function App() {
 
       {/* CUERPO PRINCIPAL */}
       <main className={`flex-1 px-4 py-6 mx-auto w-full transition-all duration-300 ${
-        view === 'progress' || view === 'history' ? 'max-w-[1750px] sm:px-6 lg:px-8 xl:px-10' : 'max-w-xl'
+        view === 'workout'
+          ? 'max-w-5xl sm:px-6 lg:px-8'
+          : view === 'edit_routine'
+          ? 'max-w-4xl sm:px-6 lg:px-8'
+          : 'max-w-[1750px] sm:px-6 lg:px-8 xl:px-10'
       }`}>
 
         {/* Banner de Entrenamiento Activo (si se navegó a otra vista) */}
-        {workoutRoutine && view !== 'workout' && (
-          <div className="mb-6 bg-gradient-to-r from-emerald-950/70 via-slate-900 to-emerald-950/40 border border-emerald-500/40 rounded-2xl p-4 shadow-xl shadow-emerald-500/10 flex items-center justify-between gap-3 animate-fade-in">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                <TrendingUp className="w-5 h-5 text-emerald-400 animate-pulse" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                    En curso
-                  </span>
-                  <span className="text-xs text-slate-400 truncate">
-                    {Object.values(workoutSessionLogs).flat().filter(s => s.completed).length} series listas
-                  </span>
+        {workoutRoutine && view !== 'workout' && (() => {
+          const allSeries = Object.values(workoutSessionLogs).flat();
+          const completedCount = allSeries.filter(s => s.completed).length;
+          const totalCount = allSeries.length;
+          const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+          return (
+            <div className="mb-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
+              <div className="absolute right-0 top-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none"></div>
+
+              <div className="flex items-center gap-3.5 min-w-0 relative z-10">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/10">
+                  <TrendingUp className="w-6 h-6 text-emerald-400 animate-pulse" />
                 </div>
-                <h4 className="text-sm font-extrabold text-white truncate mt-0.5">{workoutRoutine.name}</h4>
-              </div>
-            </div>
-            <button
-              onClick={() => setView('workout')}
-              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md shrink-0 cursor-pointer"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Reanudar</span>
-            </button>
-          </div>
-        )}
-
-        {/* 1. DASHBOARD VIEW */}
-        {view === 'dashboard' && (
-          <div className="space-y-6">
-            
-            {/* Tarjeta de Progreso rápido */}
-            <div className="glass-card rounded-3xl p-5 relative overflow-hidden">
-              <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 pointer-events-none">
-                <Dumbbell className="w-40 h-40" />
-              </div>
-              <h2 className="text-xl font-extrabold text-white mb-1 flex items-center gap-1.5">
-                <Sparkles className="w-5 h-5 text-emerald-400" /> ¡Hola, {profile?.name || 'Atleta'}!
-              </h2>
-              <p className="text-slate-400 text-sm mb-4">
-                Elige una de tus rutinas o genera plantillas prediseñadas instantáneamente.
-              </p>
-
-              {/* Botón de Nueva Rutina */}
-              <button
-                onClick={handleOpenCreateRoutine}
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer"
-              >
-                <Plus className="w-5 h-5" /> Crear Nueva Rutina
-              </button>
-            </div>
-
-            {/* Generador de Plantillas Rápidas */}
-            <div className="space-y-2.5">
-              <button
-                onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
-                className="w-full flex items-center justify-between text-xs font-bold text-slate-450 uppercase tracking-widest px-1 py-1 hover:text-white transition-colors cursor-pointer"
-              >
-                <span>Generador de Plantillas</span>
-                {isTemplatesExpanded ? <ChevronUp className="w-4 h-4 text-slate-450" /> : <ChevronDown className="w-4 h-4 text-slate-450" />}
-              </button>
-              
-              {isTemplatesExpanded && (
-                <div className="grid grid-cols-2 gap-2">
-                  {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps', 'EspaldaBiceps'] as const).map(type => (
-                    <button
-                      key={type}
-                      onClick={() => generateTemplateRoutine(type)}
-                      className="glass-card hover:bg-slate-900/60 p-3 rounded-2xl text-left border border-slate-900 transition-all flex items-center justify-between cursor-pointer"
-                    >
-                      <div>
-                        <p className="text-sm font-semibold text-white">
-                          {type === 'Fullbody'
-                            ? 'Full Body'
-                            : type === 'PechoTriceps'
-                            ? 'Pecho & Tríceps'
-                            : type === 'EspaldaBiceps'
-                            ? 'Espalda & Bíceps'
-                            : type}
-                        </p>
-                        <p className="text-[10px] text-slate-400">Autogenerar ejercicios</p>
-                      </div>
-                      <Sparkles className="w-4 h-4 text-emerald-400/80" />
-                    </button>
-                  ))}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-md border border-emerald-500/30">
+                      Entrenamiento Activo
+                    </span>
+                    <span className="text-xs text-slate-300 font-semibold">
+                      {completedCount} de {totalCount} series completadas ({pct}%)
+                    </span>
+                  </div>
+                  <h4 className="text-base sm:text-lg font-extrabold text-white truncate mt-1">
+                    {workoutRoutine.name}
+                  </h4>
+                  {/* Barra de progreso rápida */}
+                  <div className="w-48 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    ></div>
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Listado de Rutinas */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between px-1">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Mis Rutinas ({routines?.length || 0})</h3>
-                <button 
-                  onClick={() => setView('history')} 
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
+              <div className="flex items-center gap-2 relative z-10 shrink-0">
+                <button
+                  onClick={() => setView('workout')}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-[1.02]"
                 >
-                  <Calendar className="w-3.5 h-3.5" /> Historial
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Reanudar Entrenamiento</span>
                 </button>
               </div>
+            </div>
+          );
+        })()}
 
-              {routines && routines.length > 0 ? (
-                <div className="space-y-3">
-                  {routines.map(routine => {
-                    const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
-                    return (
-                      <div 
-                        key={routine.id} 
-                        className="glass-card rounded-2xl p-4 border border-slate-900 hover:border-slate-800 transition-all flex flex-col justify-between"
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <h4 className="font-bold text-white text-base leading-snug">{routine.name}</h4>
-                            <p className="text-slate-400 text-xs mt-0.5 line-clamp-2">{routine.description || 'Sin descripción.'}</p>
-                          </div>
-                          
-                          {/* Sync indicator individual */}
-                          {routine.synced === 0 && (
-                            <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase shrink-0">
-                              Pendiente
-                            </span>
-                          )}
-                        </div>
+        {/* 1. DASHBOARD VIEW */}
+        {view === 'dashboard' && (() => {
+          // Filtrado de rutinas por búsqueda y músculo seleccionado
+          const filteredRoutines = (routines || []).filter(routine => {
+            const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
+            const category = getRoutineCategory(routine, rExercises);
 
-                        {/* Detalle de ejercicios */}
-                        <div className="mt-2 text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
-                          {rExercises.slice(0, 3).map((ex) => (
-                            <span key={ex.id} className="flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-lg border border-slate-800/40">
-                              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
-                              {ex.name}
-                            </span>
-                          ))}
-                          {rExercises.length > 3 && (
-                            <span className="text-[10px] text-slate-500 self-center">+{rExercises.length - 3} más</span>
-                          )}
-                        </div>
+            // Filtro por Músculo / Categoría
+            if (routineMuscleFilter !== 'Todas') {
+              const filterLower = routineMuscleFilter.toLowerCase();
+              const catLower = category.toLowerCase();
+              const nameLower = routine.name.toLowerCase();
+              const hasMuscleInExercises = rExercises.some(e => (e.muscle_group || '').toLowerCase().includes(filterLower));
+              
+              const matchesFilter = catLower.includes(filterLower) || nameLower.includes(filterLower) || hasMuscleInExercises;
+              if (!matchesFilter) return false;
+            }
 
-                        {/* Botones de acción */}
-                        <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-slate-900/80 flex-wrap">
-                          <button
-                            onClick={() => handleStartWorkout(routine)}
-                            className="flex-1 min-w-[70px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 py-2 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
-                          >
-                            <Play className="w-3.5 h-3.5 fill-current" /> Iniciar
-                          </button>
-                          <button
-                            onClick={() => handleOpenEditRoutine(routine)}
-                            className="bg-slate-900 hover:bg-slate-800 text-slate-300 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 cursor-pointer"
-                          >
-                            <Edit className="w-3.5 h-3.5" /> Editar
-                          </button>
-                          {isOnline && (
-                            <button
-                              onClick={() => handleShareRoutine(routine)}
-                              className="bg-slate-900 hover:bg-emerald-950/30 text-slate-300 hover:text-emerald-400 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-emerald-500/20 cursor-pointer"
-                              title="Compartir en la comunidad"
-                            >
-                              <Sparkles className="w-3.5 h-3.5" /> Compartir
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleDeleteRoutine(routine.id)}
-                            className="bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center transition-all border border-slate-800 hover:border-rose-500/20 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+            // Filtro por Búsqueda (nombre, descripción, o nombres de ejercicios)
+            if (routineSearchQuery.trim()) {
+              const query = routineSearchQuery.toLowerCase().trim();
+              const matchesName = routine.name.toLowerCase().includes(query);
+              const matchesDesc = (routine.description || '').toLowerCase().includes(query);
+              const matchesEx = rExercises.some(e => e.name.toLowerCase().includes(query) || (e.muscle_group || '').toLowerCase().includes(query));
+              if (!matchesName && !matchesDesc && !matchesEx) return false;
+            }
+
+            return true;
+          });
+
+          return (
+            <div className="space-y-6">
+              
+              {/* Hero / Bienvenida y Estadísticas Rápidas en Desktop */}
+              <div className="glass-card rounded-3xl p-5 sm:p-7 relative overflow-hidden border border-slate-900 bg-gradient-to-br from-slate-900/90 via-slate-900/50 to-emerald-950/20 shadow-2xl">
+                <div className="absolute right-0 bottom-0 translate-x-12 translate-y-12 opacity-5 pointer-events-none">
+                  <Dumbbell className="w-80 h-80 text-emerald-400" />
+                </div>
+
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                  <div className="space-y-3 max-w-3xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold tracking-wide">
+                      <Sparkles className="w-3.5 h-3.5" /> Atleta Pro • Offline-First
+                    </div>
+                    
+                    <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
+                      ¡Hola, {profile?.name || 'Atleta'}!
+                    </h2>
+                    
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                      Elige una de tus rutinas para entrenar hoy, crea una personalizada o genera plantillas basadas en evidencia científica en un solo clic.
+                    </p>
+
+                    {/* KPI Cards Strip */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 pt-2">
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Dumbbell className="w-3 h-3 text-emerald-400" /> Mis Rutinas
+                        </p>
+                        <p className="text-xl font-extrabold text-white mt-1">{routines?.length || 0}</p>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Layers className="w-3 h-3 text-emerald-400" /> Ejercicios
+                        </p>
+                        <p className="text-xl font-extrabold text-emerald-400 mt-1">{userExercises.length || 0}</p>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-emerald-400" /> Sesiones
+                        </p>
+                        <p className="text-xl font-extrabold text-white mt-1">
+                          {new Set((userWorkoutLogs || []).map(l => l.logged_at ? l.logged_at.split('T')[0] : '')).size}
+                        </p>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                          <Cloud className="w-3 h-3 text-emerald-400" /> Estado
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+                          <span className="text-xs font-bold text-slate-200">{isOnline ? 'Online Sync' : 'Offline'}</span>
                         </div>
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
+
+                  {/* Acciones Rápidas Hero */}
+                  <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0 lg:w-72">
+                    <button
+                      onClick={handleOpenCreateRoutine}
+                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-xl shadow-emerald-500/20 cursor-pointer text-sm hover:scale-[1.02]"
+                    >
+                      <Plus className="w-5 h-5 stroke-[3]" /> Crear Nueva Rutina
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setView('history')}
+                        className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Calendar className="w-4 h-4 text-emerald-400" /> Historial
+                      </button>
+                      <button
+                        onClick={() => setView('progress')}
+                        className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <TrendingUp className="w-4 h-4 text-emerald-400" /> Progreso
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <div className="glass-card rounded-3xl p-8 border border-slate-900 text-center">
-                  <Dumbbell className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-                  <p className="text-sm text-slate-400">No tienes rutinas registradas.</p>
-                  <p className="text-xs text-slate-500 mt-1">Usa las plantillas rápidas de arriba o crea una desde cero.</p>
+              </div>
+
+              {/* Generador de Plantillas Rápidas */}
+              <div className="glass-card rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-900 bg-slate-900/40">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-black text-white uppercase tracking-wider">
+                        Generador de Plantillas Rápidas
+                      </h3>
+                      <p className="text-[11px] text-slate-400 hidden sm:block">
+                        Añade rutinas pre-diseñadas basadas en los patrones de entrenamiento más efectivos
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={() => setIsTemplatesExpanded(!isTemplatesExpanded)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-slate-950/70 border border-slate-800/80 hover:border-emerald-500/30 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                  >
+                    <span>{isTemplatesExpanded ? 'Ocultar' : 'Ver Plantillas'}</span>
+                    {isTemplatesExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
                 </div>
-              )}
+
+                {isTemplatesExpanded && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 mt-4 pt-4 border-t border-slate-900/80 animate-fade-in">
+                    {[
+                      { type: 'Push' as const, label: 'Push (Empuje)', sub: 'Pecho, Hombro, Tríceps', badge: 'Empuje' },
+                      { type: 'Pull' as const, label: 'Pull (Jalón)', sub: 'Espalda, Bíceps, Trapecio', badge: 'Tirón' },
+                      { type: 'Legs' as const, label: 'Legs (Pierna)', sub: 'Cuádriceps, Isquios, Gemelos', badge: 'Pierna' },
+                      { type: 'Fullbody' as const, label: 'Full Body', sub: 'Cuerpo completo balanceado', badge: 'Global' },
+                      { type: 'PechoTriceps' as const, label: 'Pecho & Tríceps', sub: 'Empuje plano, inclinado y tríceps', badge: 'Empuje' },
+                      { type: 'EspaldaBiceps' as const, label: 'Espalda & Bíceps', sub: 'Jalón vertical, remos y curl', badge: 'Tirón' }
+                    ].map(item => (
+                      <button
+                        key={item.type}
+                        onClick={() => generateTemplateRoutine(item.type)}
+                        className="glass-card hover:bg-slate-900/90 p-3 sm:p-3.5 rounded-2xl text-left border border-slate-800/80 hover:border-emerald-500/40 transition-all flex flex-col justify-between group cursor-pointer hover:-translate-y-0.5 hover:shadow-lg hover:shadow-emerald-500/5"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              {item.badge}
+                            </span>
+                            <Sparkles className="w-3.5 h-3.5 text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                          </div>
+                          <p className="text-xs sm:text-sm font-bold text-white group-hover:text-emerald-300 transition-colors leading-snug">
+                            {item.label}
+                          </p>
+                          <p className="text-[10px] text-slate-400 line-clamp-1 mt-1">
+                            {item.sub}
+                          </p>
+                        </div>
+                        <div className="mt-3 pt-2 border-t border-slate-900 flex items-center justify-between text-[10px] text-emerald-400 font-semibold group-hover:underline">
+                          <span>Generar</span>
+                          <span>+</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Listado de Rutinas con Barra de Búsqueda y Filtros en Desktop */}
+              <div className="space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs sm:text-sm font-extrabold text-slate-300 uppercase tracking-widest flex items-center gap-2">
+                      <span>Mis Rutinas</span>
+                      <span className="bg-slate-800/80 text-emerald-400 px-2.5 py-0.5 rounded-full text-xs font-black border border-slate-700">
+                        {filteredRoutines.length}
+                      </span>
+                    </h3>
+                  </div>
+
+                  {/* Buscador de Rutinas */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-full sm:w-64 md:w-80">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Buscar por rutina o ejercicio..."
+                        value={routineSearchQuery}
+                        onChange={e => setRoutineSearchQuery(e.target.value)}
+                        className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 transition-colors"
+                      />
+                      {routineSearchQuery && (
+                        <button
+                          onClick={() => setRoutineSearchQuery('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filtros de Músculo / Enfoque */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+                  {['Todas', 'Piernas', 'Empuje', 'Jalón', 'Pecho', 'Espalda', 'Hombros'].map(category => (
+                    <button
+                      key={category}
+                      onClick={() => setRoutineMuscleFilter(category)}
+                      className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer ${
+                        routineMuscleFilter === category
+                          ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                          : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {category}
+                    </button>
+                  ))}
+                  {(routineMuscleFilter !== 'Todas' || routineSearchQuery) && (
+                    <button
+                      onClick={() => {
+                        setRoutineMuscleFilter('Todas');
+                        setRoutineSearchQuery('');
+                      }}
+                      className="text-xs text-slate-400 hover:text-rose-400 px-2 py-1 underline cursor-pointer whitespace-nowrap ml-1"
+                    >
+                      Restablecer
+                    </button>
+                  )}
+                </div>
+
+                {/* Grid Responsivo Multi-Columna de Rutinas */}
+                {filteredRoutines && filteredRoutines.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
+                    {filteredRoutines.map(routine => {
+                      const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
+                      const detectedCategory = getRoutineCategory(routine, rExercises);
+
+                      return (
+                        <div 
+                          key={routine.id} 
+                          className="glass-card rounded-3xl p-5 border border-slate-900 hover:border-emerald-500/40 transition-all duration-300 flex flex-col justify-between group hover:shadow-2xl hover:shadow-emerald-500/5 hover:-translate-y-1 relative"
+                        >
+                          <div>
+                            {/* Card Header: Category Chip & Status */}
+                            <div className="flex items-center justify-between gap-2 mb-3">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                                  {detectedCategory}
+                                </span>
+                                <span className="text-[10px] font-medium text-slate-400 bg-slate-900/80 px-2 py-1 rounded-lg border border-slate-800">
+                                  {rExercises.length} {rExercises.length === 1 ? 'ejercicio' : 'ejercicios'}
+                                </span>
+                              </div>
+
+                              {routine.synced === 0 ? (
+                                <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase shrink-0">
+                                  Pendiente
+                                </span>
+                              ) : (
+                                <span className="w-2 h-2 rounded-full bg-emerald-500/40 shrink-0" title="Sincronizada"></span>
+                              )}
+                            </div>
+
+                            {/* Routine Title & Description */}
+                            <h4 className="font-extrabold text-white text-base sm:text-lg leading-snug group-hover:text-emerald-300 transition-colors">
+                              {routine.name}
+                            </h4>
+                            <p className="text-slate-400 text-xs mt-1.5 line-clamp-2 min-h-[2rem]">
+                              {routine.description || 'Rutina sin notas adicionales.'}
+                            </p>
+
+                            {/* Detalle de Ejercicios */}
+                            <div className="mt-4 pt-3 border-t border-slate-900/80 space-y-2">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                Ejercicios incluidos:
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {rExercises.slice(0, 4).map((ex) => (
+                                  <span 
+                                    key={ex.id} 
+                                    className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-300 bg-slate-950/70 border border-slate-800/80 px-2 py-1 rounded-lg"
+                                  >
+                                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0"></span>
+                                    <span className="truncate max-w-[130px]">{ex.name}</span>
+                                  </span>
+                                ))}
+                                {rExercises.length > 4 && (
+                                  <span className="inline-flex items-center text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg">
+                                    +{rExercises.length - 4} más
+                                  </span>
+                                )}
+                                {rExercises.length === 0 && (
+                                  <span className="text-[11px] text-slate-500 italic">Sin ejercicios configurados aún</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Botones de Acción */}
+                          <div className="mt-5 pt-3 border-t border-slate-900/80 space-y-2">
+                            <button
+                              onClick={() => handleStartWorkout(routine)}
+                              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md shadow-emerald-500/10 cursor-pointer hover:shadow-emerald-500/25"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" /> Iniciar Entrenamiento
+                            </button>
+
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <button
+                                onClick={() => handleOpenEditRoutine(routine)}
+                                className="bg-slate-900 hover:bg-slate-800 text-slate-300 py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 cursor-pointer"
+                                title="Editar rutina"
+                              >
+                                <Edit className="w-3.5 h-3.5" /> Editar
+                              </button>
+
+                              {isOnline ? (
+                                <button
+                                  onClick={() => handleShareRoutine(routine)}
+                                  className="bg-slate-900 hover:bg-emerald-950/30 text-slate-300 hover:text-emerald-400 py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-emerald-500/20 cursor-pointer"
+                                  title="Compartir en la comunidad"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5" /> Compartir
+                                </button>
+                              ) : (
+                                <div className="bg-slate-950/40 border border-slate-900 rounded-xl py-1.5 px-2 flex items-center justify-center text-slate-600 text-[10px] cursor-not-allowed" title="Conéctate para compartir">
+                                  Offline
+                                </div>
+                              )}
+
+                              <button
+                                onClick={() => handleDeleteRoutine(routine.id)}
+                                className="bg-slate-900 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 py-1.5 px-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all border border-slate-800 hover:border-rose-500/20 cursor-pointer"
+                                title="Eliminar rutina"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : routines && routines.length > 0 ? (
+                  /* Estado cuando hay rutinas pero no coinciden con los filtros */
+                  <div className="glass-card rounded-3xl p-10 border border-slate-900 text-center space-y-3">
+                    <Search className="w-10 h-10 text-slate-600 mx-auto" />
+                    <p className="text-base font-bold text-white">No se encontraron rutinas coincidentes</p>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      No hay resultados para "{routineSearchQuery || routineMuscleFilter}". Prueba cambiando el término o restableciendo los filtros.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setRoutineMuscleFilter('Todas');
+                        setRoutineSearchQuery('');
+                      }}
+                      className="bg-slate-900 hover:bg-slate-800 text-emerald-400 font-bold px-4 py-2 rounded-xl text-xs border border-slate-800 cursor-pointer inline-flex items-center gap-1.5 mt-2"
+                    >
+                      Restablecer filtros
+                    </button>
+                  </div>
+                ) : (
+                  /* Estado sin ninguna rutina creada */
+                  <div className="glass-card rounded-3xl p-10 border border-slate-900 text-center space-y-3">
+                    <div className="w-14 h-14 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-center mx-auto text-slate-600">
+                      <Dumbbell className="w-7 h-7" />
+                    </div>
+                    <h4 className="text-base font-bold text-white">No tienes rutinas registradas</h4>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                      Usa las plantillas rápidas prediseñadas arriba para autogenerar una rutina en 1 clic, o crea una desde cero.
+                    </p>
+                    <button
+                      onClick={handleOpenCreateRoutine}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-500/10"
+                    >
+                      <Plus className="w-4 h-4 stroke-[3]" /> Crear mi primera rutina
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* 2. CREAR / EDITAR RUTINA VIEW */}
         {view === 'edit_routine' && (
@@ -2405,7 +2700,7 @@ function App() {
                     <p className="text-xs text-slate-400">Cargando rutinas de la comunidad...</p>
                   </div>
                 ) : communityRoutines.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4 sm:gap-5">
                     {communityRoutines.map(cRoutine => {
                       const cExs = communityExercises.filter(ex => ex.community_routine_id === cRoutine.id);
                       return (
