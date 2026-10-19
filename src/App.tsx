@@ -43,6 +43,33 @@ const getExerciseImage = (name: string): string | null => {
   return null;
 };
 
+const ACTIVE_WORKOUT_STORAGE_KEY = 'gymstructor_active_workout_session';
+
+interface SavedActiveWorkout {
+  userId?: string;
+  routine: LocalRoutine;
+  sessionLogs: {
+    [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
+  };
+  exercises: LocalExercise[];
+  startedAt?: string;
+  lastUpdated?: string;
+}
+
+const getSavedActiveWorkout = (): SavedActiveWorkout | null => {
+  try {
+    const raw = localStorage.getItem(ACTIVE_WORKOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.routine && parsed.sessionLogs && Array.isArray(parsed.exercises) && parsed.exercises.length > 0) {
+      return parsed;
+    }
+  } catch (e) {
+    console.error('Error reading active workout from storage:', e);
+  }
+  return null;
+};
+
 function App() {
   // Estados para Autenticación
   const [user, setUser] = useState<any>(null);
@@ -124,7 +151,9 @@ function App() {
     user?.email || null,
     user?.user_metadata?.name || null
   );
-  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress' | 'community'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'edit_routine' | 'workout' | 'history' | 'progress' | 'community'>(() => {
+    return getSavedActiveWorkout() ? 'workout' : 'dashboard';
+  });
 
   // Reactividad local mediante Dexie
   const routines = useLiveQuery(
@@ -164,11 +193,15 @@ function App() {
   const [routineDescription, setRoutineDescription] = useState('');
   const [routineExercises, setRoutineExercises] = useState<Partial<LocalExercise>[]>([]);
 
-  // Estados para el Entrenamiento en curso (Workout Session)
-  const [workoutRoutine, setWorkoutRoutine] = useState<LocalRoutine | null>(null);
+  // Estados para el Entrenamiento en curso (Workout Session) - Restaurados automáticamente si se recarga la pantalla
+  const [workoutRoutine, setWorkoutRoutine] = useState<LocalRoutine | null>(() => {
+    return getSavedActiveWorkout()?.routine || null;
+  });
   const [workoutSessionLogs, setWorkoutSessionLogs] = useState<{
     [exerciseId: string]: { seriesIndex: number; weight: number; reps: number; completed: boolean }[];
-  }>({});
+  }>(() => {
+    return getSavedActiveWorkout()?.sessionLogs || {};
+  });
 
   // Estado para expandir la imagen del ejercicio
   const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
@@ -196,7 +229,53 @@ function App() {
   };
 
   // Estado local para los ejercicios en curso (permite reordenar dinámicamente)
-  const [workoutExercises, setWorkoutExercises] = useState<LocalExercise[]>([]);
+  const [workoutExercises, setWorkoutExercises] = useState<LocalExercise[]>(() => {
+    return getSavedActiveWorkout()?.exercises || [];
+  });
+
+  // Persistir en localStorage el estado del entrenamiento activo de forma reactiva
+  useEffect(() => {
+    if (workoutRoutine && workoutExercises.length > 0) {
+      const sessionData: SavedActiveWorkout = {
+        userId: currentUserId || undefined,
+        routine: workoutRoutine,
+        sessionLogs: workoutSessionLogs,
+        exercises: workoutExercises,
+        startedAt: getSavedActiveWorkout()?.startedAt || new Date().toISOString(),
+        lastUpdated: new Date().toISOString()
+      };
+      localStorage.setItem(ACTIVE_WORKOUT_STORAGE_KEY, JSON.stringify(sessionData));
+    }
+  }, [workoutRoutine, workoutSessionLogs, workoutExercises, currentUserId]);
+
+  // Si cambia de usuario autenticado y el entrenamiento guardado pertenece a otro usuario, limpiarlo
+  useEffect(() => {
+    if (!currentUserId) return;
+    const saved = getSavedActiveWorkout();
+    if (saved && saved.userId && saved.userId !== currentUserId) {
+      localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+      setWorkoutRoutine(null);
+      setWorkoutSessionLogs({});
+      setWorkoutExercises([]);
+      if (view === 'workout') setView('dashboard');
+    }
+  }, [currentUserId, view]);
+
+  // Advertir al usuario antes de recargar o cerrar pestaña si hay un entrenamiento activo
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (workoutRoutine) {
+        e.preventDefault();
+        e.returnValue = 'Tienes un entrenamiento activo en curso.';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [workoutRoutine]);
 
   // Compresión y conversión de imágenes para almacenamiento local ligero y sincronización
   const compressAndConvertToBase64 = (file: File): Promise<string> => {
@@ -466,6 +545,10 @@ function App() {
     setIsLoading(true);
     try {
       await supabase.auth.signOut();
+      localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+      setWorkoutRoutine(null);
+      setWorkoutSessionLogs({});
+      setWorkoutExercises([]);
       setIsAuthenticated(false);
       setUser(null);
       setView('dashboard');
@@ -971,6 +1054,11 @@ function App() {
 
   // --- ENTRENAMIENTO ACTIVO ---
   const handleStartWorkout = async (routine: LocalRoutine) => {
+    if (workoutRoutine && workoutRoutine.id !== routine.id) {
+      if (!confirm(`Tienes un entrenamiento en curso ("${workoutRoutine.name}"). ¿Deseas descartarlo e iniciar "${routine.name}"?`)) {
+        return;
+      }
+    }
     setWorkoutRoutine(routine);
     const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     
@@ -1097,8 +1185,10 @@ function App() {
       return;
     }
 
+    localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
     setWorkoutRoutine(null);
     setWorkoutSessionLogs({});
+    setWorkoutExercises([]);
     setView('dashboard');
     if (isOnline) {
       triggerSync();
@@ -1421,6 +1511,14 @@ function App() {
             >
               <Calendar className="w-4 h-4" /> Historial
             </button>
+            {workoutRoutine && (
+              <button
+                onClick={() => setView('workout')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse shadow-sm"
+              >
+                <TrendingUp className="w-4 h-4" /> En Curso
+              </button>
+            )}
           </nav>
         )}
 
@@ -1486,6 +1584,35 @@ function App() {
       <main className={`flex-1 px-4 py-6 mx-auto w-full transition-all duration-300 ${
         view === 'progress' || view === 'history' ? 'max-w-7xl sm:px-6 lg:px-8' : 'max-w-xl'
       }`}>
+
+        {/* Banner de Entrenamiento Activo (si se navegó a otra vista) */}
+        {workoutRoutine && view !== 'workout' && (
+          <div className="mb-6 bg-gradient-to-r from-emerald-950/70 via-slate-900 to-emerald-950/40 border border-emerald-500/40 rounded-2xl p-4 shadow-xl shadow-emerald-500/10 flex items-center justify-between gap-3 animate-fade-in">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                <TrendingUp className="w-5 h-5 text-emerald-400 animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                    En curso
+                  </span>
+                  <span className="text-xs text-slate-400 truncate">
+                    {Object.values(workoutSessionLogs).flat().filter(s => s.completed).length} series listas
+                  </span>
+                </div>
+                <h4 className="text-sm font-extrabold text-white truncate mt-0.5">{workoutRoutine.name}</h4>
+              </div>
+            </div>
+            <button
+              onClick={() => setView('workout')}
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md shrink-0 cursor-pointer"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Reanudar</span>
+            </button>
+          </div>
+        )}
 
         {/* 1. DASHBOARD VIEW */}
         {view === 'dashboard' && (
@@ -1893,22 +2020,42 @@ function App() {
           <div className="space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setView('dashboard')}
+                  className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer mr-1"
+                  title="Pausar y volver al menú principal"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
                 <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
                   <TrendingUp className="w-5 h-5 text-emerald-400 animate-pulse" /> Entrenamiento Activo
                 </h2>
               </div>
-              <button
-                onClick={() => {
-                  if (confirm('¿Deseas cancelar el entrenamiento actual? No se guardará el historial.')) {
-                    setWorkoutRoutine(null);
-                    setWorkoutSessionLogs({});
-                    setView('dashboard');
-                  }
-                }}
-                className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-              >
-                Cancelar
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setView('dashboard')}
+                  className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
+                  title="Pausar temporalmente"
+                >
+                  Pausar
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm('¿Deseas cancelar el entrenamiento actual? No se guardará el historial.')) {
+                      localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+                      setWorkoutRoutine(null);
+                      setWorkoutSessionLogs({});
+                      setWorkoutExercises([]);
+                      setView('dashboard');
+                    }
+                  }}
+                  className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
 
             <div className="bg-slate-900/40 rounded-2xl p-4 border border-slate-900/60">
@@ -2258,6 +2405,17 @@ function App() {
             <TrendingUp className="w-5 h-5" />
             <span className="text-[10px] font-bold">Progreso</span>
           </button>
+
+          {workoutRoutine && (
+            <button
+              onClick={() => setView('workout')}
+              className="flex flex-col items-center gap-0.5 cursor-pointer transition-colors text-emerald-400 relative"
+            >
+              <span className="absolute -top-1 right-2 w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <TrendingUp className="w-5 h-5 animate-pulse" />
+              <span className="text-[10px] font-black">En Curso</span>
+            </button>
+          )}
 
           <button
             onClick={() => setView('community')}
