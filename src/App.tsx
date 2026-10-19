@@ -31,6 +31,9 @@ import {
   Camera,
   Search,
   Layers,
+  ArrowRight,
+  Zap,
+  ChevronRight,
   Image as ImageIcon
 } from 'lucide-react';
 
@@ -63,6 +66,74 @@ const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExer
     if (sorted.length > 0) return sorted[0][0];
   }
   return 'General';
+};
+
+export type SplitType = 'pierna' | 'espalda_biceps' | 'pecho_triceps';
+
+export interface SplitDefinition {
+  key: SplitType;
+  name: string;
+  badge: string;
+  icon: string;
+  filterKey: string;
+  description: string;
+}
+
+export const SPLIT_DEFINITIONS: Record<SplitType, SplitDefinition> = {
+  pierna: {
+    key: 'pierna',
+    name: 'Pierna',
+    badge: 'Piernas (Legs)',
+    icon: '🦵',
+    filterKey: 'Piernas',
+    description: 'Cuádriceps, Isquiotibiales, Glúteos y Pantorrillas'
+  },
+  espalda_biceps: {
+    key: 'espalda_biceps',
+    name: 'Espalda y Bíceps',
+    badge: 'Espalda & Bíceps (Pull)',
+    icon: '⚡',
+    filterKey: 'Espalda',
+    description: 'Tirón vertical, remos para espalda y flexión para bíceps'
+  },
+  pecho_triceps: {
+    key: 'pecho_triceps',
+    name: 'Pecho y Tríceps',
+    badge: 'Pecho & Tríceps (Push)',
+    icon: '💪',
+    filterKey: 'Pecho',
+    description: 'Empuje horizontal, press inclinado y extensión de tríceps'
+  }
+};
+
+const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): SplitType | 'otro' => {
+  const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  
+  if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('sentadilla') || norm.includes('cuad') || norm.includes('gluteo') || norm.includes('pantorrilla')) {
+    return 'pierna';
+  }
+  if ((norm.includes('espalda') || norm.includes('pull') || norm.includes('jalon') || norm.includes('remo')) &&
+      (norm.includes('bicep'))) {
+    return 'espalda_biceps';
+  }
+  if ((norm.includes('pecho') || norm.includes('push') || norm.includes('empuje') || norm.includes('banca')) &&
+      (norm.includes('tricep'))) {
+    return 'pecho_triceps';
+  }
+  if (norm.includes('espalda') || norm.includes('pull') || norm.includes('jalon') || norm.includes('remo')) {
+    return 'espalda_biceps';
+  }
+  if (norm.includes('pecho') || norm.includes('push') || norm.includes('empuje') || norm.includes('banca')) {
+    return 'pecho_triceps';
+  }
+
+  // Verificar grupos musculares en los ejercicios
+  const groups = rExercises.map(e => (e.muscle_group || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+  if (groups.some(g => g.includes('pierna') || g.includes('cuad') || g.includes('gluteo') || g.includes('pantorrilla'))) return 'pierna';
+  if (groups.some(g => g.includes('espalda') || g.includes('bicep'))) return 'espalda_biceps';
+  if (groups.some(g => g.includes('pecho') || g.includes('tricep'))) return 'pecho_triceps';
+
+  return 'otro';
 };
 
 const ACTIVE_WORKOUT_STORAGE_KEY = 'gymstructor_active_workout_session';
@@ -1746,19 +1817,125 @@ function App() {
 
         {/* 1. DASHBOARD VIEW */}
         {view === 'dashboard' && (() => {
-          // Filtrado de rutinas por búsqueda y músculo seleccionado
+          // 1. Antigüedad y Perfil del Atleta (Regla del primer mes vs usuario experimentado)
+          const profileCreatedAt = profile?.created_at ? new Date(profile.created_at).getTime() : 0;
+          const accountAgeDays = profileCreatedAt > 0 
+            ? Math.floor((Date.now() - profileCreatedAt) / (1000 * 60 * 60 * 24)) 
+            : 0;
+          // Usuario de más de 1 mes (>= 30 días) O usuario con rutinas ya establecidas (>= 2 rutinas)
+          const isExperiencedUser = accountAgeDays >= 30 || (routines && routines.length >= 2);
+
+          // 2. Contadores de rutinas por cada combinación muscular principal
+          const countRoutinesForSplit = (splitKey: SplitType) => {
+            return (routines || []).filter(r => {
+              const rExs = (exercises || []).filter(e => e.routine_id === r.id && e.deleted === 0);
+              return matchRoutineToSplit(r, rExs) === splitKey;
+            }).length;
+          };
+
+          const piernaRoutinesCount = countRoutinesForSplit('pierna');
+          const espaldaBicepsRoutinesCount = countRoutinesForSplit('espalda_biceps');
+          const pechoTricepsRoutinesCount = countRoutinesForSplit('pecho_triceps');
+
+          // 3. Análisis del historial semanal de entrenamientos para sugerir el grupo del día
+          let lastPiernaTimestamp = 0;
+          let lastEspaldaTimestamp = 0;
+          let lastPechoTimestamp = 0;
+          let mostRecentWorkoutTimestamp = 0;
+          let mostRecentWorkoutSplit: SplitType | null = null;
+
+          (userWorkoutLogs || []).forEach(log => {
+            const ex = (exercises || []).find(e => e.id === log.exercise_id);
+            const routine = (routines || []).find(r => r.id === ex?.routine_id);
+            if (!ex || !routine) return;
+
+            const split = matchRoutineToSplit(routine, [ex]);
+            const time = new Date(log.logged_at).getTime();
+            if (!isNaN(time) && (split === 'pierna' || split === 'espalda_biceps' || split === 'pecho_triceps')) {
+              if (time > mostRecentWorkoutTimestamp) {
+                mostRecentWorkoutTimestamp = time;
+                mostRecentWorkoutSplit = split;
+              }
+              if (split === 'pierna' && time > lastPiernaTimestamp) lastPiernaTimestamp = time;
+              if (split === 'espalda_biceps' && time > lastEspaldaTimestamp) lastEspaldaTimestamp = time;
+              if (split === 'pecho_triceps' && time > lastPechoTimestamp) lastPechoTimestamp = time;
+            }
+          });
+
+          // 4. Determinación rotacional de qué grupo muscular toca hoy
+          let suggestedSplitKey: SplitType = 'pierna';
+          if (mostRecentWorkoutSplit === 'pecho_triceps') {
+            suggestedSplitKey = 'espalda_biceps';
+          } else if (mostRecentWorkoutSplit === 'espalda_biceps') {
+            suggestedSplitKey = 'pierna';
+          } else if (mostRecentWorkoutSplit === 'pierna') {
+            suggestedSplitKey = 'pecho_triceps';
+          } else {
+            // Si no hay entrenamientos previos registrados, arrancar con Pierna
+            suggestedSplitKey = 'pierna';
+          }
+
+          const suggestedSplit = SPLIT_DEFINITIONS[suggestedSplitKey];
+          const suggestedCount = suggestedSplitKey === 'pierna' 
+            ? piernaRoutinesCount 
+            : suggestedSplitKey === 'espalda_biceps' 
+            ? espaldaBicepsRoutinesCount 
+            : pechoTricepsRoutinesCount;
+
+          // Generación del texto explicativo basado en descansos y semana
+          const todayStr = new Date().toISOString().split('T')[0];
+          const mostRecentDateStr = mostRecentWorkoutTimestamp > 0 
+            ? new Date(mostRecentWorkoutTimestamp).toISOString().split('T')[0] 
+            : '';
+          const alreadyTrainedToday = mostRecentDateStr === todayStr && mostRecentWorkoutSplit !== null;
+
+          let suggestedReason = '';
+          const lastSplitKey = mostRecentWorkoutSplit as SplitType | null;
+          if (alreadyTrainedToday && lastSplitKey && SPLIT_DEFINITIONS[lastSplitKey]) {
+            const trainedDef = SPLIT_DEFINITIONS[lastSplitKey];
+            suggestedReason = `¡Gran trabajo hoy! Ya registraste tu sesión de ${trainedDef.name}. Si vas a realizar una segunda sesión o deseas planear tu siguiente entrenamiento, por rotación corresponde: ${suggestedSplit.name}.`;
+          } else if (mostRecentWorkoutTimestamp > 0 && lastSplitKey && SPLIT_DEFINITIONS[lastSplitKey]) {
+            const prevDef = SPLIT_DEFINITIONS[lastSplitKey];
+            const daysAgo = Math.floor((Date.now() - mostRecentWorkoutTimestamp) / (1000 * 60 * 60 * 24));
+            const daysText = daysAgo === 0 ? 'ayer' : daysAgo === 1 ? 'hace 1 día' : `hace ${daysAgo} días`;
+            suggestedReason = `Tu última sesión registrada fue ${prevDef.name} (${daysText}). Siguiendo tu rotación semanal balanceada, hoy te toca activar: ${suggestedSplit.name}.`;
+          } else {
+            suggestedReason = 'Te sugerimos arrancar con Pierna para comenzar tu ciclo semanal con el mayor estímulo metabólico y de fuerza muscular.';
+          }
+
+          const handleSelectSuggestedSplit = (filterKey: string) => {
+            setRoutineMuscleFilter(filterKey);
+            setRoutineSearchQuery('');
+            setTimeout(() => {
+              const el = document.getElementById('routines-list-section');
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+              }
+            }, 50);
+          };
+
+          // 5. Filtrado de rutinas por búsqueda y músculo seleccionado
           const filteredRoutines = (routines || []).filter(routine => {
             const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
             const category = getRoutineCategory(routine, rExercises);
+            const split = matchRoutineToSplit(routine, rExercises);
 
             // Filtro por Músculo / Categoría
             if (routineMuscleFilter !== 'Todas') {
-              const filterLower = routineMuscleFilter.toLowerCase();
-              const catLower = category.toLowerCase();
-              const nameLower = routine.name.toLowerCase();
-              const hasMuscleInExercises = rExercises.some(e => (e.muscle_group || '').toLowerCase().includes(filterLower));
+              const filterLower = routineMuscleFilter.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
               
-              const matchesFilter = catLower.includes(filterLower) || nameLower.includes(filterLower) || hasMuscleInExercises;
+              const isMatchSplit = 
+                (filterLower.includes('pierna') && split === 'pierna') ||
+                ((filterLower.includes('espalda') || filterLower.includes('bicep')) && split === 'espalda_biceps') ||
+                ((filterLower.includes('pecho') || filterLower.includes('tricep') || filterLower.includes('empuje')) && split === 'pecho_triceps');
+
+              const catLower = category.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+              const nameLower = routine.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+              const hasMuscleInExercises = rExercises.some(e => 
+                (e.muscle_group || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(filterLower)
+              );
+              
+              const matchesFilter = isMatchSplit || catLower.includes(filterLower) || nameLower.includes(filterLower) || hasMuscleInExercises;
               if (!matchesFilter) return false;
             }
 
@@ -1777,89 +1954,222 @@ function App() {
           return (
             <div className="space-y-6">
               
-              {/* Hero / Bienvenida y Estadísticas Rápidas en Desktop */}
-              <div className="glass-card rounded-3xl p-5 sm:p-7 relative overflow-hidden border border-slate-900 bg-gradient-to-br from-slate-900/90 via-slate-900/50 to-emerald-950/20 shadow-2xl">
-                <div className="absolute right-0 bottom-0 translate-x-12 translate-y-12 opacity-5 pointer-events-none">
-                  <Dumbbell className="w-80 h-80 text-emerald-400" />
-                </div>
+              {/* MODO USUARIO EXPERIMENTADO (> 1 MES O RUTINAS ESTABLECIDAS): ASISTENTE INTELIGENTE DIARIO */}
+              {isExperiencedUser ? (
+                <div className="glass-card rounded-3xl p-6 sm:p-8 relative overflow-hidden border border-emerald-500/30 bg-gradient-to-br from-slate-900/95 via-slate-900/80 to-emerald-950/30 shadow-2xl">
+                  <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
-                  <div className="space-y-3 max-w-3xl">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold tracking-wide">
-                      <Sparkles className="w-3.5 h-3.5" /> Atleta Pro • Offline-First
-                    </div>
-                    
-                    <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
-                      ¡Hola, {profile?.name || 'Atleta'}!
-                    </h2>
-                    
-                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
-                      Elige una de tus rutinas para entrenar hoy, crea una personalizada o genera plantillas basadas en evidencia científica en un solo clic.
-                    </p>
-
-                    {/* KPI Cards Strip */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 pt-2">
-                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                          <Dumbbell className="w-3 h-3 text-emerald-400" /> Mis Rutinas
-                        </p>
-                        <p className="text-xl font-extrabold text-white mt-1">{routines?.length || 0}</p>
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6 relative z-10">
+                    <div className="space-y-3.5 max-w-3xl">
+                      {/* Badge Inteligente */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold tracking-wide">
+                          <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Asistente Diario de Entrenamiento</span>
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-medium">
+                          Basado en tu rotación y descansos musculares
+                        </span>
                       </div>
 
-                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                          <Layers className="w-3 h-3 text-emerald-400" /> Ejercicios
-                        </p>
-                        <p className="text-xl font-extrabold text-emerald-400 mt-1">{userExercises.length || 0}</p>
-                      </div>
-
-                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-emerald-400" /> Sesiones
-                        </p>
-                        <p className="text-xl font-extrabold text-white mt-1">
-                          {new Set((userWorkoutLogs || []).map(l => l.logged_at ? l.logged_at.split('T')[0] : '')).size}
+                      {/* Propuesta del Día */}
+                      <div>
+                        <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight leading-tight">
+                          ¡Hola, {profile?.name || 'Oscar'}!{' '}
+                          <span className="text-emerald-400 block sm:inline">
+                            Hoy toca {suggestedSplit.name}, ¿no?
+                          </span>
+                        </h2>
+                        <p className="text-slate-300 text-xs sm:text-sm leading-relaxed mt-2 max-w-2xl">
+                          {suggestedReason}
                         </p>
                       </div>
 
-                      <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                          <Cloud className="w-3 h-3 text-emerald-400" /> Estado
-                        </p>
-                        <div className="flex items-center gap-1.5 mt-1.5">
-                          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
-                          <span className="text-xs font-bold text-slate-200">{isOnline ? 'Online Sync' : 'Offline'}</span>
+                      {/* Botón Principal Destacado */}
+                      <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                        <button
+                          onClick={() => handleSelectSuggestedSplit(suggestedSplit.filterKey)}
+                          className="bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black py-3.5 px-6 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-xl shadow-emerald-500/25 cursor-pointer text-sm sm:text-base hover:scale-[1.02]"
+                        >
+                          <span className="text-xl">{suggestedSplit.icon}</span>
+                          <span>Ver Rutinas de {suggestedSplit.name} ({suggestedCount})</span>
+                          <ArrowRight className="w-4 h-4 ml-1 stroke-[3]" />
+                        </button>
+                        
+                        <div className="text-xs text-slate-400 px-1 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                          <span>{suggestedCount} {suggestedCount === 1 ? 'rutina lista' : 'rutinas listas'}</span>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Acciones Rápidas Hero */}
-                  <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0 lg:w-72">
-                    <button
-                      onClick={handleOpenCreateRoutine}
-                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-xl shadow-emerald-500/20 cursor-pointer text-sm hover:scale-[1.02]"
-                    >
-                      <Plus className="w-5 h-5 stroke-[3]" /> Crear Nueva Rutina
-                    </button>
+                    {/* Acciones Secundarias (Historial, Progreso, Crear Rutina) */}
+                    <div className="flex flex-col gap-2.5 shrink-0 lg:w-64 pt-1">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => setView('history')}
+                          className="bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Calendar className="w-4 h-4 text-emerald-400" /> Historial
+                        </button>
+                        <button
+                          onClick={() => setView('progress')}
+                          className="bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <TrendingUp className="w-4 h-4 text-emerald-400" /> Progreso
+                        </button>
+                      </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                      {/* Botón secundario discreto de Crear Rutina */}
                       <button
-                        onClick={() => setView('history')}
-                        className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        onClick={handleOpenCreateRoutine}
+                        className="w-full bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/30 text-slate-300 hover:text-emerald-300 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                       >
-                        <Calendar className="w-4 h-4 text-emerald-400" /> Historial
-                      </button>
-                      <button
-                        onClick={() => setView('progress')}
-                        className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <TrendingUp className="w-4 h-4 text-emerald-400" /> Progreso
+                        <Plus className="w-4 h-4 text-emerald-400" /> Crear Nueva Rutina
                       </button>
                     </div>
                   </div>
+
+                  {/* Selector "¿Prefieres hacer otro grupo muscular hoy?" */}
+                  <div className="mt-7 pt-5 border-t border-slate-800/80">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                      <p className="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                        <span>¿Prefieres entrenar otro grupo muscular hoy?</span>
+                      </p>
+                      <span className="text-[11px] text-slate-400">Toca para filtrar tus rutinas:</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      {[
+                        { key: 'pierna', name: 'Pierna', icon: '🦵', filterKey: 'Piernas', count: piernaRoutinesCount, sub: 'Cuádriceps, Isquios, Glúteos' },
+                        { key: 'espalda_biceps', name: 'Espalda & Bíceps', icon: '⚡', filterKey: 'Espalda', count: espaldaBicepsRoutinesCount, sub: 'Tirón vertical y flexión' },
+                        { key: 'pecho_triceps', name: 'Pecho & Tríceps', icon: '💪', filterKey: 'Pecho', count: pechoTricepsRoutinesCount, sub: 'Empuje plano y extensión' },
+                        { key: 'todas', name: 'Ver Todas', icon: '🎯', filterKey: 'Todas', count: routines?.length || 0, sub: 'Catálogo completo' }
+                      ].map(group => {
+                        const isSelected = routineMuscleFilter === group.filterKey;
+                        const isSuggested = suggestedSplitKey === group.key;
+                        return (
+                          <button
+                            key={group.key}
+                            onClick={() => handleSelectSuggestedSplit(group.filterKey)}
+                            className={`p-3 rounded-2xl border text-left transition-all flex items-center justify-between group cursor-pointer ${
+                              isSelected 
+                                ? 'bg-emerald-500/20 border-emerald-500 text-white shadow-lg shadow-emerald-500/15' 
+                                : 'bg-slate-950/60 hover:bg-slate-900 border-slate-800/90 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-xl shrink-0">{group.icon}</span>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-bold truncate leading-tight group-hover:text-emerald-300 transition-colors">
+                                    {group.name}
+                                  </p>
+                                  {isSuggested && (
+                                    <span className="text-[8px] font-black uppercase px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+                                      Hoy
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5 truncate">{group.count} {group.count === 1 ? 'rutina' : 'rutinas'}</p>
+                              </div>
+                            </div>
+                            {isSelected ? (
+                              <Check className="w-4 h-4 text-emerald-400 shrink-0 ml-1" />
+                            ) : (
+                              <ChevronRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 shrink-0 ml-1" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* MODO PRIMER MES (USUARIO NUEVO / ONBOARDING INICIAL): ENFOCADO EN CREAR RUTINAS */
+                <div className="glass-card rounded-3xl p-5 sm:p-7 relative overflow-hidden border border-slate-900 bg-gradient-to-br from-slate-900/90 via-slate-900/50 to-emerald-950/20 shadow-2xl">
+                  <div className="absolute right-0 bottom-0 translate-x-12 translate-y-12 opacity-5 pointer-events-none">
+                    <Dumbbell className="w-80 h-80 text-emerald-400" />
+                  </div>
+
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                    <div className="space-y-3 max-w-3xl">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold tracking-wide">
+                        <Sparkles className="w-3.5 h-3.5" /> Primer Mes • Configura tus Rutinas
+                      </div>
+                      
+                      <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-2">
+                        ¡Hola, {profile?.name || 'Atleta'}!
+                      </h2>
+                      
+                      <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                        Durante tu primer mes, crea tus rutinas personalizadas o genera plantillas basadas en evidencia científica en un solo clic. Una vez configuradas, tu Asistente te propondrá automáticamente qué entrenar cada día.
+                      </p>
+
+                      {/* KPI Cards Strip */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 pt-2">
+                        <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                            <Dumbbell className="w-3 h-3 text-emerald-400" /> Mis Rutinas
+                          </p>
+                          <p className="text-xl font-extrabold text-white mt-1">{routines?.length || 0}</p>
+                        </div>
+
+                        <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                            <Layers className="w-3 h-3 text-emerald-400" /> Ejercicios
+                          </p>
+                          <p className="text-xl font-extrabold text-emerald-400 mt-1">{userExercises.length || 0}</p>
+                        </div>
+
+                        <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-emerald-400" /> Sesiones
+                          </p>
+                          <p className="text-xl font-extrabold text-white mt-1">
+                            {new Set((userWorkoutLogs || []).map(l => l.logged_at ? l.logged_at.split('T')[0] : '')).size}
+                          </p>
+                        </div>
+
+                        <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                            <Cloud className="w-3 h-3 text-emerald-400" /> Estado
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+                            <span className="text-xs font-bold text-slate-200">{isOnline ? 'Online Sync' : 'Offline'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Botón de Creación Protagonista para Primer Mes */}
+                    <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0 lg:w-72">
+                      <button
+                        onClick={handleOpenCreateRoutine}
+                        className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-xl shadow-emerald-500/20 cursor-pointer text-sm hover:scale-[1.02]"
+                      >
+                        <Plus className="w-5 h-5 stroke-[3]" /> Crear Nueva Rutina
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => setView('history')}
+                          className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Calendar className="w-4 h-4 text-emerald-400" /> Historial
+                        </button>
+                        <button
+                          onClick={() => setView('progress')}
+                          className="bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <TrendingUp className="w-4 h-4 text-emerald-400" /> Progreso
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Generador de Plantillas Rápidas */}
               <div className="glass-card rounded-2xl sm:rounded-3xl p-4 sm:p-5 border border-slate-900 bg-slate-900/40">
@@ -1927,9 +2237,9 @@ function App() {
               </div>
 
               {/* Listado de Rutinas con Barra de Búsqueda y Filtros en Desktop */}
-              <div className="space-y-4">
+              <div id="routines-list-section" className="space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5">
                     <h3 className="text-xs sm:text-sm font-extrabold text-slate-300 uppercase tracking-widest flex items-center gap-2">
                       <span>Mis Rutinas</span>
                       <span className="bg-slate-800/80 text-emerald-400 px-2.5 py-0.5 rounded-full text-xs font-black border border-slate-700">
@@ -1938,7 +2248,7 @@ function App() {
                     </h3>
                   </div>
 
-                  {/* Buscador de Rutinas */}
+                  {/* Buscador de Rutinas y Botón Crear Rutina */}
                   <div className="flex items-center gap-2">
                     <div className="relative w-full sm:w-64 md:w-80">
                       <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -1958,22 +2268,36 @@ function App() {
                         </button>
                       )}
                     </div>
+
+                    <button
+                      onClick={handleOpenCreateRoutine}
+                      className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 hover:border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                      title="Crear nueva rutina"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Nueva</span>
+                    </button>
                   </div>
                 </div>
 
                 {/* Filtros de Músculo / Enfoque */}
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
-                  {['Todas', 'Piernas', 'Empuje', 'Jalón', 'Pecho', 'Espalda', 'Hombros'].map(category => (
+                  {[
+                    { label: 'Todas', value: 'Todas' },
+                    { label: '🦵 Pierna', value: 'Piernas' },
+                    { label: '⚡ Espalda & Bíceps', value: 'Espalda' },
+                    { label: '💪 Pecho & Tríceps', value: 'Pecho' },
+                  ].map(tab => (
                     <button
-                      key={category}
-                      onClick={() => setRoutineMuscleFilter(category)}
-                      className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer ${
-                        routineMuscleFilter === category
+                      key={tab.value}
+                      onClick={() => setRoutineMuscleFilter(tab.value)}
+                      className={`px-3.5 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                        routineMuscleFilter === tab.value
                           ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
                           : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700'
                       }`}
                     >
-                      {category}
+                      {tab.label}
                     </button>
                   ))}
                   {(routineMuscleFilter !== 'Todas' || routineSearchQuery) && (
