@@ -51,9 +51,11 @@ const getExerciseImage = (name: string): string | null => {
 const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): string => {
   const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase();
   if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('gluteo') || norm.includes('pantorrilla')) return 'Piernas';
+  if ((norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) && (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal'))) return 'Core & Hombros';
+  if (norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) return 'Hombros';
+  if (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal')) return 'Core';
   if (norm.includes('empuje') || norm.includes('push') || norm.includes('pecho') || norm.includes('tricep') || norm.includes('trícep')) return 'Empuje / Pecho';
   if (norm.includes('jalon') || norm.includes('jalón') || norm.includes('pull') || norm.includes('espalda') || norm.includes('bicep') || norm.includes('bícep')) return 'Jalón / Espalda';
-  if (norm.includes('hombro') || norm.includes('militar')) return 'Hombros';
   if (norm.includes('full') || norm.includes('cuerpo')) return 'Full Body';
   
   if (rExercises.length > 0) {
@@ -68,7 +70,7 @@ const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExer
   return 'General';
 };
 
-export type SplitType = 'pierna' | 'espalda_biceps' | 'pecho_triceps';
+export type SplitType = 'pierna' | 'espalda_biceps' | 'pecho_triceps' | 'core_hombros';
 
 export interface SplitDefinition {
   key: SplitType;
@@ -103,12 +105,27 @@ export const SPLIT_DEFINITIONS: Record<SplitType, SplitDefinition> = {
     icon: '💪',
     filterKey: 'Pecho',
     description: 'Empuje horizontal, press inclinado y extensión de tríceps'
+  },
+  core_hombros: {
+    key: 'core_hombros',
+    name: 'Core y Hombros',
+    badge: 'Core & Hombros (Deltoides / Abdomen)',
+    icon: '🛡️',
+    filterKey: 'Hombros',
+    description: 'Deltoides anterior, lateral, posterior y estabilidad central profunda'
   }
 };
 
 const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): SplitType | 'otro' => {
   const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   
+  if ((norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) &&
+      (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal'))) {
+    return 'core_hombros';
+  }
+  if (norm.includes('core') || norm.includes('abdomen')) {
+    return 'core_hombros';
+  }
   if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('sentadilla') || norm.includes('cuad') || norm.includes('gluteo') || norm.includes('pantorrilla')) {
     return 'pierna';
   }
@@ -126,12 +143,17 @@ const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExe
   if (norm.includes('pecho') || norm.includes('push') || norm.includes('empuje') || norm.includes('banca')) {
     return 'pecho_triceps';
   }
+  if (norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) {
+    return 'core_hombros';
+  }
 
   // Verificar grupos musculares en los ejercicios
   const groups = rExercises.map(e => (e.muscle_group || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+  if (groups.some(g => g.includes('hombro')) && groups.some(g => g.includes('core') || g.includes('abdomen'))) return 'core_hombros';
   if (groups.some(g => g.includes('pierna') || g.includes('cuad') || g.includes('gluteo') || g.includes('pantorrilla'))) return 'pierna';
   if (groups.some(g => g.includes('espalda') || g.includes('bicep'))) return 'espalda_biceps';
   if (groups.some(g => g.includes('pecho') || g.includes('tricep'))) return 'pecho_triceps';
+  if (groups.some(g => g.includes('hombro') || g.includes('core') || g.includes('abdomen'))) return 'core_hombros';
 
   return 'otro';
 };
@@ -869,8 +891,96 @@ function App() {
     if (isOnline) triggerSync();
   };
 
+  // --- GENERACIÓN DE 3 RUTINAS DE CORE Y HOMBROS ---
+  const seedCoreHombrosRoutines = async () => {
+    if (!currentUserId) return;
+    const now = new Date().toISOString();
+
+    const routinesToSeed = [
+      {
+        name: 'Core y Hombros: Fuerza & Estabilidad',
+        description: 'Press militar pesado con barra, trabajo deltoideo completo 3D y estabilidad de la zona media profunda.',
+        exercises: [
+          { name: 'Press militar con barra', muscle_group: 'Hombros', series: 4, reps: 8, weight: 65 },
+          { name: 'Elevaciones laterales con mancuernas', muscle_group: 'Hombros', series: 4, reps: 12, weight: 20 },
+          { name: 'Pájaros con mancuerna (posterior)', muscle_group: 'Hombros', series: 3, reps: 15, weight: 15 },
+          { name: 'Rueda abdominal (Ab Wheel)', muscle_group: 'Abdomen', series: 3, reps: 10, weight: 0 },
+          { name: 'Plancha con toque de hombros', muscle_group: 'Abdomen', series: 3, reps: 20, weight: 0 },
+          { name: 'Elevación de piernas colgado', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 0 }
+        ]
+      },
+      {
+        name: 'Core y Hombros: Hipertrofia 3D & Antirrotación',
+        description: 'Hipertrofia en los 3 ángulos del deltoides combinada con fuerza antirrotacional del core y poleas de tensión constante.',
+        exercises: [
+          { name: 'Press Arnold con mancuernas', muscle_group: 'Hombros', series: 4, reps: 10, weight: 35 },
+          { name: 'Elevaciones laterales en polea', muscle_group: 'Hombros', series: 4, reps: 12, weight: 15 },
+          { name: 'Face pull en polea alta con cuerda', muscle_group: 'Hombros', series: 4, reps: 15, weight: 35 },
+          { name: 'Press Pallof en polea', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 20 },
+          { name: 'Crunch en polea con cuerda', muscle_group: 'Abdomen', series: 4, reps: 15, weight: 50 },
+          { name: 'Plancha lateral con elevación', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 0 }
+        ]
+      },
+      {
+        name: 'Core y Hombros: Definición & Tensión Continua',
+        description: 'Aislamiento de deltoides bajo tensión continua con máquina y barra Z, sumado a control isométrico de abdomen y oblicuos.',
+        exercises: [
+          { name: 'Press de hombros en máquina Smith', muscle_group: 'Hombros', series: 4, reps: 10, weight: 50 },
+          { name: 'Elevaciones frontales con disco', muscle_group: 'Hombros', series: 3, reps: 12, weight: 25 },
+          { name: 'Remo al mentón con barra Z', muscle_group: 'Hombros', series: 3, reps: 12, weight: 45 },
+          { name: 'Hollow body hold (isométrico)', muscle_group: 'Abdomen', series: 3, reps: 45, weight: 0 },
+          { name: 'Giros rusos con disco (Russian twists)', muscle_group: 'Abdomen', series: 3, reps: 20, weight: 15 },
+          { name: 'Dead bug isométrico con mancuerna', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 10 }
+        ]
+      }
+    ];
+
+    for (const rData of routinesToSeed) {
+      const exists = (routines || []).some(r => r.name.toLowerCase().trim() === rData.name.toLowerCase().trim() && r.deleted === 0);
+      if (exists) continue;
+
+      const routineId = generateUUID();
+      await db.routines.add({
+        id: routineId,
+        user_id: currentUserId,
+        name: rData.name,
+        description: rData.description,
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      });
+
+      let order = 0;
+      for (const ex of rData.exercises) {
+        await db.exercises.add({
+          id: generateUUID(),
+          routine_id: routineId,
+          name: ex.name,
+          muscle_group: ex.muscle_group,
+          series: ex.series,
+          reps: ex.reps,
+          weight: ex.weight,
+          order_index: order++,
+          deleted: 0,
+          created_at: now,
+          updated_at: now,
+          synced: 0
+        });
+      }
+    }
+
+    if (isOnline) {
+      triggerSync();
+    }
+  };
+
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
-  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps' | 'EspaldaBiceps') => {
+  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps' | 'EspaldaBiceps' | 'CoreHombros') => {
+    if (type === 'CoreHombros') {
+      await seedCoreHombrosRoutines();
+      return;
+    }
     const routineId = generateUUID();
     const now = new Date().toISOString();
 
@@ -974,13 +1084,13 @@ function App() {
     }
   };
 
-  // Autocarga de las rutinas solicitadas ("Espalda y bíceps" y "Pecho y tríceps") si aún no existen
+  // Autocarga de las rutinas solicitadas ("Espalda y bíceps", "Pecho y tríceps" y "Core y hombros") si aún no existen
   useEffect(() => {
     if (!currentUserId || !routines) return;
 
     // 1. Espalda y bíceps
     const hasBackBiceps = routines.some(r =>
-      r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps'))
+      r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps')) && r.deleted === 0
     );
     const keyBack = `auto_loaded_espalda_biceps_${currentUserId}`;
     if (!hasBackBiceps && !localStorage.getItem(keyBack)) {
@@ -990,12 +1100,25 @@ function App() {
 
     // 2. Pecho y tríceps
     const hasChestTriceps = routines.some(r =>
-      r.name.toLowerCase().includes('pecho') && (r.name.toLowerCase().includes('tríceps') || r.name.toLowerCase().includes('triceps'))
+      r.name.toLowerCase().includes('pecho') && (r.name.toLowerCase().includes('tríceps') || r.name.toLowerCase().includes('triceps')) && r.deleted === 0
     );
     const keyChest = `auto_loaded_pecho_triceps_${currentUserId}`;
     if (!hasChestTriceps && !localStorage.getItem(keyChest)) {
       localStorage.setItem(keyChest, 'true');
       generateTemplateRoutine('PechoTriceps');
+    }
+
+    // 3. Core y hombros (3 rutinas completas solicitadas)
+    const coreHombrosRoutines = routines.filter(r => {
+      const norm = (r.name + ' ' + (r.description || '')).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return (norm.includes('hombro') || norm.includes('deltoid') || norm.includes('militar')) && 
+             (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal')) &&
+             r.deleted === 0;
+    });
+    const keyCoreHombros = `auto_loaded_core_hombros_3_${currentUserId}`;
+    if (coreHombrosRoutines.length < 3 && !localStorage.getItem(keyCoreHombros)) {
+      localStorage.setItem(keyCoreHombros, 'true');
+      seedCoreHombrosRoutines();
     }
   }, [currentUserId, routines]);
 
@@ -1100,6 +1223,33 @@ function App() {
       });
 
       if (isOnline) triggerSync();
+    }
+
+    // 3. Limpieza de rutinas duplicadas de Core y Hombros (si aplica)
+    const coreHombroNames = [
+      'Core y Hombros: Fuerza & Estabilidad',
+      'Core y Hombros: Hipertrofia 3D & Antirrotación',
+      'Core y Hombros: Definición & Tensión Continua'
+    ];
+    for (const rName of coreHombroNames) {
+      const matchingRoutines = routines.filter(r => r.name.toLowerCase().trim() === rName.toLowerCase().trim() && r.deleted === 0);
+      if (matchingRoutines.length > 1) {
+        const scored = matchingRoutines.map(routine => {
+          const rExs = exercises.filter(ex => ex.routine_id === routine.id && ex.deleted === 0);
+          const score = (routine.description?.length || 0) + rExs.length * 10;
+          return { routine, score, exercises: rExs };
+        }).sort((a, b) => b.score - a.score);
+
+        const duplicates = scored.slice(1);
+        const now = new Date().toISOString();
+        duplicates.forEach(async ({ routine, exercises: rExs }) => {
+          await db.routines.update(routine.id, { deleted: 1, synced: 0, updated_at: now });
+          for (const ex of rExs) {
+            await db.exercises.update(ex.id, { deleted: 1, synced: 0, updated_at: now });
+          }
+        });
+        if (isOnline) triggerSync();
+      }
     }
   }, [currentUserId, routines, exercises, isOnline, triggerSync]);
 
@@ -1940,11 +2090,13 @@ function App() {
           const piernaRoutinesCount = countRoutinesForSplit('pierna');
           const espaldaBicepsRoutinesCount = countRoutinesForSplit('espalda_biceps');
           const pechoTricepsRoutinesCount = countRoutinesForSplit('pecho_triceps');
+          const coreHombrosRoutinesCount = countRoutinesForSplit('core_hombros');
 
           // 3. Análisis del historial semanal de entrenamientos para sugerir el grupo del día
           let lastPiernaTimestamp = 0;
           let lastEspaldaTimestamp = 0;
           let lastPechoTimestamp = 0;
+          let lastCoreHombrosTimestamp = 0;
           let mostRecentWorkoutTimestamp = 0;
           let mostRecentWorkoutSplit: SplitType | null = null;
 
@@ -1955,7 +2107,7 @@ function App() {
 
             const split = matchRoutineToSplit(routine, [ex]);
             const time = new Date(log.logged_at).getTime();
-            if (!isNaN(time) && (split === 'pierna' || split === 'espalda_biceps' || split === 'pecho_triceps')) {
+            if (!isNaN(time) && (split === 'pierna' || split === 'espalda_biceps' || split === 'pecho_triceps' || split === 'core_hombros')) {
               if (time > mostRecentWorkoutTimestamp) {
                 mostRecentWorkoutTimestamp = time;
                 mostRecentWorkoutSplit = split;
@@ -1963,6 +2115,7 @@ function App() {
               if (split === 'pierna' && time > lastPiernaTimestamp) lastPiernaTimestamp = time;
               if (split === 'espalda_biceps' && time > lastEspaldaTimestamp) lastEspaldaTimestamp = time;
               if (split === 'pecho_triceps' && time > lastPechoTimestamp) lastPechoTimestamp = time;
+              if (split === 'core_hombros' && time > lastCoreHombrosTimestamp) lastCoreHombrosTimestamp = time;
             }
           });
 
@@ -1973,6 +2126,8 @@ function App() {
           } else if (mostRecentWorkoutSplit === 'espalda_biceps') {
             suggestedSplitKey = 'pierna';
           } else if (mostRecentWorkoutSplit === 'pierna') {
+            suggestedSplitKey = 'core_hombros';
+          } else if (mostRecentWorkoutSplit === 'core_hombros') {
             suggestedSplitKey = 'pecho_triceps';
           } else {
             // Si no hay entrenamientos previos registrados, arrancar con Pierna
@@ -1984,7 +2139,9 @@ function App() {
             ? piernaRoutinesCount 
             : suggestedSplitKey === 'espalda_biceps' 
             ? espaldaBicepsRoutinesCount 
-            : pechoTricepsRoutinesCount;
+            : suggestedSplitKey === 'pecho_triceps'
+            ? pechoTricepsRoutinesCount
+            : coreHombrosRoutinesCount;
 
           // Generación del texto explicativo basado en descansos y semana
           const todayStr = new Date().toISOString().split('T')[0];
@@ -2031,7 +2188,8 @@ function App() {
               const isMatchSplit = 
                 (filterLower.includes('pierna') && split === 'pierna') ||
                 ((filterLower.includes('espalda') || filterLower.includes('bicep')) && split === 'espalda_biceps') ||
-                ((filterLower.includes('pecho') || filterLower.includes('tricep') || filterLower.includes('empuje')) && split === 'pecho_triceps');
+                ((filterLower.includes('pecho') || filterLower.includes('tricep') || filterLower.includes('empuje')) && split === 'pecho_triceps') ||
+                ((filterLower.includes('hombro') || filterLower.includes('core') || filterLower.includes('deltoid') || filterLower.includes('abdomen')) && split === 'core_hombros');
 
               const catLower = category.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
               const nameLower = routine.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -2143,11 +2301,12 @@ function App() {
                       <span className="text-[11px] text-slate-400">Toca para filtrar tus rutinas:</span>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
                       {[
                         { key: 'pierna', name: 'Pierna', icon: '🦵', filterKey: 'Piernas', count: piernaRoutinesCount, sub: 'Cuádriceps, Isquios, Glúteos' },
                         { key: 'espalda_biceps', name: 'Espalda & Bíceps', icon: '⚡', filterKey: 'Espalda', count: espaldaBicepsRoutinesCount, sub: 'Tirón vertical y flexión' },
                         { key: 'pecho_triceps', name: 'Pecho & Tríceps', icon: '💪', filterKey: 'Pecho', count: pechoTricepsRoutinesCount, sub: 'Empuje plano y extensión' },
+                        { key: 'core_hombros', name: 'Core & Hombros', icon: '🛡️', filterKey: 'Hombros', count: coreHombrosRoutinesCount, sub: 'Deltoides 3D y abdomen' },
                         { key: 'todas', name: 'Ver Todas', icon: '🎯', filterKey: 'Todas', count: routines?.length || 0, sub: 'Catálogo completo' }
                       ].map(group => {
                         const isSelected = routineMuscleFilter === group.filterKey;
@@ -2302,14 +2461,15 @@ function App() {
                 </div>
 
                 {isTemplatesExpanded && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 mt-4 pt-4 border-t border-slate-900/80 animate-fade-in">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 sm:gap-3 mt-4 pt-4 border-t border-slate-900/80 animate-fade-in">
                     {[
                       { type: 'Push' as const, label: 'Push (Empuje)', sub: 'Pecho, Hombro, Tríceps', badge: 'Empuje' },
                       { type: 'Pull' as const, label: 'Pull (Jalón)', sub: 'Espalda, Bíceps, Trapecio', badge: 'Tirón' },
                       { type: 'Legs' as const, label: 'Legs (Pierna)', sub: 'Cuádriceps, Isquios, Gemelos', badge: 'Pierna' },
                       { type: 'Fullbody' as const, label: 'Full Body', sub: 'Cuerpo completo balanceado', badge: 'Global' },
                       { type: 'PechoTriceps' as const, label: 'Pecho & Tríceps', sub: 'Empuje plano, inclinado y tríceps', badge: 'Empuje' },
-                      { type: 'EspaldaBiceps' as const, label: 'Espalda & Bíceps', sub: 'Jalón vertical, remos y curl', badge: 'Tirón' }
+                      { type: 'EspaldaBiceps' as const, label: 'Espalda & Bíceps', sub: 'Jalón vertical, remos y curl', badge: 'Tirón' },
+                      { type: 'CoreHombros' as const, label: 'Core & Hombros', sub: 'Deltoides 3D, fuerza y abdomen', badge: 'Core' }
                     ].map(item => (
                       <button
                         key={item.type}
@@ -2391,6 +2551,7 @@ function App() {
                     { label: '🦵 Pierna', value: 'Piernas' },
                     { label: '⚡ Espalda & Bíceps', value: 'Espalda' },
                     { label: '💪 Pecho & Tríceps', value: 'Pecho' },
+                    { label: '🛡️ Core & Hombros', value: 'Hombros' },
                   ].map(tab => (
                     <button
                       key={tab.value}
