@@ -689,7 +689,7 @@ function App() {
   };
 
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
-  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps') => {
+  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps' | 'EspaldaBiceps') => {
     const routineId = generateUUID();
     const now = new Date().toISOString();
 
@@ -735,6 +735,18 @@ function App() {
         { name: 'Fondos asistidos', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 70 },
         { name: 'Jalón cuerda sobre cabeza', muscle_group: 'Tríceps', series: 3, reps: 12, weight: 42.5 }
       ];
+    } else if (type === 'EspaldaBiceps') {
+      name = 'Espalda y bíceps';
+      description = 'Rutina de tirón vertical, remos para espalda y flexión para bíceps.';
+      exercisesTemplate = [
+        { name: 'Jalón al pecho en polea', muscle_group: 'Espalda', series: 4, reps: 12, weight: 52 },
+        { name: 'Remo con mancuerna', muscle_group: 'Espalda', series: 3, reps: 12, weight: 35 },
+        { name: 'Remo en polea baja', muscle_group: 'Espalda', series: 3, reps: 12, weight: 40 },
+        { name: 'Máquina espalda baja', muscle_group: 'Espalda', series: 3, reps: 12, weight: 30 },
+        { name: 'Curl con barra', muscle_group: 'Bíceps', series: 3, reps: 12, weight: 30 },
+        { name: 'Curl martillo', muscle_group: 'Bíceps', series: 3, reps: 12, weight: 25 },
+        { name: 'Curl concentrado', muscle_group: 'Bíceps', series: 2, reps: 12, weight: 20 }
+      ];
     } else {
       name = 'Cuerpo Completo (Full Body)';
       description = 'Rutina general para todo el cuerpo.';
@@ -758,6 +770,7 @@ function App() {
       synced: 0
     });
 
+    let order = 0;
     for (const ex of exercisesTemplate) {
       await db.exercises.add({
         id: generateUUID(),
@@ -767,6 +780,7 @@ function App() {
         series: ex.series,
         reps: ex.reps,
         weight: ex.weight,
+        order_index: order++,
         deleted: 0,
         created_at: now,
         updated_at: now,
@@ -778,6 +792,19 @@ function App() {
       triggerSync();
     }
   };
+
+  // Autocarga de la rutina solicitada "Espalda y bíceps" si aún no existe en el perfil del usuario
+  useEffect(() => {
+    if (!currentUserId || !routines) return;
+    const hasBackBiceps = routines.some(r =>
+      r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps'))
+    );
+    const key = `auto_loaded_espalda_biceps_${currentUserId}`;
+    if (!hasBackBiceps && !localStorage.getItem(key)) {
+      localStorage.setItem(key, 'true');
+      generateTemplateRoutine('EspaldaBiceps');
+    }
+  }, [currentUserId, routines]);
 
   // --- CRUD ACCIONES ---
   const handleOpenCreateRoutine = () => {
@@ -1484,7 +1511,7 @@ function App() {
               
               {isTemplatesExpanded && (
                 <div className="grid grid-cols-2 gap-2">
-                  {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps'] as const).map(type => (
+                  {(['Push', 'Pull', 'Legs', 'Fullbody', 'PechoTriceps', 'EspaldaBiceps'] as const).map(type => (
                     <button
                       key={type}
                       onClick={() => generateTemplateRoutine(type)}
@@ -1492,7 +1519,13 @@ function App() {
                     >
                       <div>
                         <p className="text-sm font-semibold text-white">
-                          {type === 'Fullbody' ? 'Full Body' : type === 'PechoTriceps' ? 'Pecho & Tríceps' : type}
+                          {type === 'Fullbody'
+                            ? 'Full Body'
+                            : type === 'PechoTriceps'
+                            ? 'Pecho & Tríceps'
+                            : type === 'EspaldaBiceps'
+                            ? 'Espalda & Bíceps'
+                            : type}
                         </p>
                         <p className="text-[10px] text-slate-400">Autogenerar ejercicios</p>
                       </div>
