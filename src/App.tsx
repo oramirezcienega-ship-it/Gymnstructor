@@ -1625,6 +1625,30 @@ function App() {
     }
   };
 
+  // Función para salir o cancelar el entrenamiento activo de forma segura
+  const handleExitWorkout = () => {
+    const allSeries = Object.values(workoutSessionLogs).flat();
+    const hasCompleted = allSeries.some(s => s.completed);
+    if (hasCompleted) {
+      if (confirm('¿Deseas salir del entrenamiento actual?\n\nLas series que ya completaste quedarán guardadas en tu historial.')) {
+        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+        setWorkoutRoutine(null);
+        setWorkoutSessionLogs({});
+        setWorkoutExercises([]);
+        setView('dashboard');
+        if (isOnline) triggerSync();
+      }
+    } else {
+      if (confirm('¿Deseas cancelar el entrenamiento actual?')) {
+        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+        setWorkoutRoutine(null);
+        setWorkoutSessionLogs({});
+        setWorkoutExercises([]);
+        setView('dashboard');
+      }
+    }
+  };
+
   if (isRecoveringPassword) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-slate-100 selection:bg-emerald-500/30 font-sans">
@@ -1884,119 +1908,220 @@ function App() {
     );
   }
 
+  // Métricas rápidas del entrenamiento activo si está en curso
+  const activeWorkoutAllSeries = workoutRoutine ? Object.values(workoutSessionLogs).flat() : [];
+  const activeWorkoutCompletedCount = activeWorkoutAllSeries.filter(s => s.completed).length;
+  const activeWorkoutTotalCount = activeWorkoutAllSeries.length;
+  const activeWorkoutPct = activeWorkoutTotalCount > 0 ? Math.round((activeWorkoutCompletedCount / activeWorkoutTotalCount) * 100) : 0;
+
   return (
     <div className="flex flex-col min-h-screen pb-16 md:pb-8 bg-slate-950">
       {/* HEADER / BARRA DE CONEXIÓN */}
-      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-            <Dumbbell className="w-5 h-5 text-emerald-400" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold tracking-tight text-white m-0 leading-none">Gymstructor</h1>
-            <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Offline-First App</span>
-          </div>
-        </div>
-
-        {/* Navegación Desktop */}
-        {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
-          <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
-            <button
-              onClick={() => setView('dashboard')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'dashboard'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Dumbbell className="w-4 h-4" /> Rutinas
-            </button>
-            <button
-              onClick={() => setView('progress')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'progress'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <TrendingUp className="w-4 h-4" /> Progreso
-            </button>
-            <button
-              onClick={() => setView('community')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'community'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" /> Comunidad
-            </button>
-            <button
-              onClick={() => setView('history')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'history'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Calendar className="w-4 h-4" /> Historial
-            </button>
-            {workoutRoutine && (
+      <header 
+        className="sticky top-0 z-40 bg-slate-950/95 backdrop-blur-md border-b border-slate-900 px-4 py-2.5 sm:py-3 transition-all relative shadow-sm"
+        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+      >
+        {view === 'workout' && workoutRoutine ? (
+          /* Cabecera Adaptativa para Modo Entrenamiento Activo */
+          <div className="flex items-center justify-between w-full gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
               <button
-                onClick={() => setView('workout')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse shadow-sm"
+                type="button"
+                onClick={() => setView('dashboard')}
+                className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                title="Pausar y volver al menú principal"
               >
-                <TrendingUp className="w-4 h-4" /> En Curso
+                <ArrowLeft className="w-4 h-4" />
               </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2 w-2 relative shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <h2 className="text-sm sm:text-base font-extrabold text-white truncate m-0 leading-tight">
+                    {workoutRoutine.name}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[10px] text-emerald-400 font-bold">
+                    {activeWorkoutCompletedCount} de {activeWorkoutTotalCount} series ({activeWorkoutPct}%)
+                  </span>
+                  <span className="text-[9px] text-slate-500 font-medium hidden xs:inline">
+                    {isOnline ? '• Offline-Ready' : '• Offline'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setView('dashboard')}
+                className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-2.5 sm:px-3 py-1.5 rounded-xl transition-all cursor-pointer font-semibold"
+                title="Pausar temporalmente"
+              >
+                Pausar
+              </button>
+              <button
+                type="button"
+                onClick={handleExitWorkout}
+                className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-2.5 sm:px-3 py-1.5 rounded-xl transition-all cursor-pointer font-semibold"
+                title="Salir del entrenamiento"
+              >
+                Salir
+              </button>
+            </div>
+          </div>
+        ) : view === 'edit_routine' ? (
+          /* Cabecera Adaptativa para Crear / Editar Rutina */
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2.5">
+              <button 
+                onClick={() => setView('dashboard')} 
+                className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                title="Volver"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-white m-0 leading-tight">
+                  {activeRoutine ? 'Editar Rutina' : 'Crear Rutina'}
+                </h2>
+                <span className="text-[10px] text-slate-400">Personaliza tus ejercicios y series</span>
+              </div>
+            </div>
+            <button
+              onClick={handleSaveRoutine}
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-500/10 transition-all"
+            >
+              <Save className="w-3.5 h-3.5" /> Guardar
+            </button>
+          </div>
+        ) : (
+          /* Cabecera Estándar de la Aplicación */
+          <>
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                <Dumbbell className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold tracking-tight text-white m-0 leading-none">Gymstructor</h1>
+                <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Offline-First App</span>
+              </div>
+            </div>
+
+            {/* Navegación Desktop */}
+            {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
+              <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
+                <button
+                  onClick={() => setView('dashboard')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'dashboard'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Dumbbell className="w-4 h-4" /> Rutinas
+                </button>
+                <button
+                  onClick={() => setView('progress')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'progress'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <TrendingUp className="w-4 h-4" /> Progreso
+                </button>
+                <button
+                  onClick={() => setView('community')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'community'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4" /> Comunidad
+                </button>
+                <button
+                  onClick={() => setView('history')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'history'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" /> Historial
+                </button>
+                {workoutRoutine && (
+                  <button
+                    onClick={() => setView('workout')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse shadow-sm"
+                  >
+                    <TrendingUp className="w-4 h-4" /> En Curso
+                  </button>
+                )}
+              </nav>
             )}
-          </nav>
+
+            {/* Estatus e Interacción de Sincronización */}
+            <div className="flex items-center gap-2">
+              {/* Conexión */}
+              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${
+                isOnline 
+                  ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/20' 
+                  : 'bg-rose-950/30 text-rose-400 border-rose-500/20'
+              }`}>
+                {isOnline ? <Cloud className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+              </div>
+
+              {/* Sincronización */}
+              <button
+                onClick={() => triggerSync(true)}
+                disabled={!isOnline}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  pendingCount > 0
+                    ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 shadow-lg shadow-amber-500/20'
+                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 disabled:opacity-50'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>Sincronizar</span>
+                {pendingCount > 0 && (
+                  <span className="bg-slate-950 text-white rounded-full px-1.5 py-0.5 text-[9px] font-bold">
+                    {pendingCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Avatar estilo Netflix */}
+              <button
+                onClick={() => setShowProfileModal(true)}
+                className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 hover:scale-105 transition-all shadow-md shadow-emerald-500/10 cursor-pointer overflow-hidden relative group border border-emerald-500/20"
+                title="Ver Perfil"
+              >
+                {/* Ojos y sonrisa estilo Netflix */}
+                <svg viewBox="0 0 32 32" className="w-6 h-6 fill-slate-950 opacity-90">
+                  <circle cx="10" cy="11" r="2.5" />
+                  <circle cx="22" cy="11" r="2.5" />
+                  <path d="M 6 18 C 6 18, 9 24, 16 24 C 23 24, 26 18, 26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+                </svg>
+              </button>
+            </div>
+          </>
         )}
 
-        {/* Estatus e Interacción de Sincronización */}
-        <div className="flex items-center gap-2">
-          {/* Conexión */}
-          <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${
-            isOnline 
-              ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/20' 
-              : 'bg-rose-950/30 text-rose-400 border-rose-500/20'
-          }`}>
-            {isOnline ? <Cloud className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+        {/* Barra de progreso de series del entrenamiento activo */}
+        {view === 'workout' && workoutRoutine && (
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-slate-900/80 overflow-hidden">
+            <div 
+              className="h-full bg-emerald-400 transition-all duration-300 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
+              style={{ width: `${activeWorkoutPct}%` }}
+            />
           </div>
-
-          {/* Sincronización */}
-          <button
-            onClick={() => triggerSync(true)}
-            disabled={!isOnline}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-              pendingCount > 0
-                ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 disabled:opacity-50'
-            }`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>Sincronizar</span>
-            {pendingCount > 0 && (
-              <span className="bg-slate-950 text-white rounded-full px-1.5 py-0.5 text-[9px] font-bold">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-
-          {/* Avatar estilo Netflix */}
-          <button
-            onClick={() => setShowProfileModal(true)}
-            className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 hover:scale-105 transition-all shadow-md shadow-emerald-500/10 cursor-pointer overflow-hidden relative group border border-emerald-500/20"
-            title="Ver Perfil"
-          >
-            {/* Ojos y sonrisa estilo Netflix */}
-            <svg viewBox="0 0 32 32" className="w-6 h-6 fill-slate-950 opacity-90">
-              <circle cx="10" cy="11" r="2.5" />
-              <circle cx="22" cy="11" r="2.5" />
-              <path d="M 6 18 C 6 18, 9 24, 16 24 C 23 24, 26 18, 26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" />
-            </svg>
-          </button>
-        </div>
+        )}
       </header>
 
       {/* FEEDBACK DE ERROR DE SYNC */}
@@ -2020,54 +2145,47 @@ function App() {
       }`}>
 
         {/* Banner de Entrenamiento Activo (si se navegó a otra vista) */}
-        {workoutRoutine && view !== 'workout' && (() => {
-          const allSeries = Object.values(workoutSessionLogs).flat();
-          const completedCount = allSeries.filter(s => s.completed).length;
-          const totalCount = allSeries.length;
-          const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+        {workoutRoutine && view !== 'workout' && (
+          <div className="mb-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
+            <div className="absolute right-0 top-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none"></div>
 
-          return (
-            <div className="mb-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none"></div>
-
-              <div className="flex items-center gap-3.5 min-w-0 relative z-10">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/10">
-                  <TrendingUp className="w-6 h-6 text-emerald-400 animate-pulse" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-md border border-emerald-500/30">
-                      Entrenamiento Activo
-                    </span>
-                    <span className="text-xs text-slate-300 font-semibold">
-                      {completedCount} de {totalCount} series completadas ({pct}%)
-                    </span>
-                  </div>
-                  <h4 className="text-base sm:text-lg font-extrabold text-white truncate mt-1">
-                    {workoutRoutine.name}
-                  </h4>
-                  {/* Barra de progreso rápida */}
-                  <div className="w-48 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
-                      style={{ width: `${pct}%` }}
-                    ></div>
-                  </div>
-                </div>
+            <div className="flex items-center gap-3.5 min-w-0 relative z-10">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/10">
+                <TrendingUp className="w-6 h-6 text-emerald-400 animate-pulse" />
               </div>
-
-              <div className="flex items-center gap-2 relative z-10 shrink-0">
-                <button
-                  onClick={() => setView('workout')}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-[1.02]"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>Reanudar Entrenamiento</span>
-                </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-md border border-emerald-500/30">
+                    Entrenamiento Activo
+                  </span>
+                  <span className="text-xs text-slate-300 font-semibold">
+                    {activeWorkoutCompletedCount} de {activeWorkoutTotalCount} series completadas ({activeWorkoutPct}%)
+                  </span>
+                </div>
+                <h4 className="text-base sm:text-lg font-extrabold text-white truncate mt-1">
+                  {workoutRoutine.name}
+                </h4>
+                {/* Barra de progreso rápida */}
+                <div className="w-48 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+                    style={{ width: `${activeWorkoutPct}%` }}
+                  ></div>
+                </div>
               </div>
             </div>
-          );
-        })()}
+
+            <div className="flex items-center gap-2 relative z-10 shrink-0">
+              <button
+                onClick={() => setView('workout')}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-[1.02]"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Reanudar Entrenamiento</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 1. DASHBOARD VIEW */}
         {view === 'dashboard' && (() => {
@@ -2735,18 +2853,6 @@ function App() {
         {/* 2. CREAR / EDITAR RUTINA VIEW */}
         {view === 'edit_routine' && (
           <div className="space-y-5">
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setView('dashboard')} 
-                className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-              <h2 className="text-lg font-bold text-white">
-                {activeRoutine ? 'Editar Rutina' : 'Crear Rutina'}
-              </h2>
-            </div>
-
             <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">Nombre de la Rutina</label>
@@ -2980,63 +3086,12 @@ function App() {
 
         {/* 3. WORKOUT SESSION VIEW */}
         {view === 'workout' && workoutRoutine && (
-          <div className="space-y-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setView('dashboard')}
-                  className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer mr-1"
-                  title="Pausar y volver al menú principal"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
-                  <TrendingUp className="w-5 h-5 text-emerald-400 animate-pulse" /> Entrenamiento Activo
-                </h2>
+          <div className="space-y-4">
+            {workoutRoutine.description && (
+              <div className="bg-slate-900/40 rounded-2xl p-3.5 sm:p-4 border border-slate-900/60">
+                <p className="text-xs text-slate-400 leading-relaxed">{workoutRoutine.description}</p>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setView('dashboard')}
-                  className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
-                  title="Pausar temporalmente"
-                >
-                  Pausar
-                </button>
-                <button
-                  onClick={() => {
-                    const hasCompleted = Object.values(workoutSessionLogs).flat().some(s => s.completed);
-                    if (hasCompleted) {
-                      if (confirm('¿Deseas salir del entrenamiento actual?\n\nLas series que ya completaste quedarán guardadas en tu historial.')) {
-                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
-                        setWorkoutRoutine(null);
-                        setWorkoutSessionLogs({});
-                        setWorkoutExercises([]);
-                        setView('dashboard');
-                        if (isOnline) triggerSync();
-                      }
-                    } else {
-                      if (confirm('¿Deseas cancelar el entrenamiento actual?')) {
-                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
-                        setWorkoutRoutine(null);
-                        setWorkoutSessionLogs({});
-                        setWorkoutExercises([]);
-                        setView('dashboard');
-                      }
-                    }
-                  }}
-                  className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
-                >
-                  Salir
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-slate-900/40 rounded-2xl p-4 border border-slate-900/60">
-              <h3 className="font-extrabold text-white text-base leading-none">{workoutRoutine.name}</h3>
-              <p className="text-xs text-slate-400 mt-1.5">{workoutRoutine.description || 'Registrando carga y series.'}</p>
-            </div>
+            )}
 
             {/* Lista de ejercicios para el entrenamiento */}
             <div className="space-y-4">
@@ -3360,7 +3415,10 @@ function App() {
 
       {/* BOTTOM NAVIGATION BAR (Persistente en vistas principales) */}
       {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30">
+        <nav 
+          className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30"
+          style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+        >
           <button
             onClick={() => setView('dashboard')}
             className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
