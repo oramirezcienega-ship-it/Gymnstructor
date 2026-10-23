@@ -24,7 +24,6 @@ import {
   TrendingUp,
   Play,
   ArrowLeft,
-  CheckCircle2,
   AlertCircle,
   Lock,
   User,
@@ -318,8 +317,23 @@ function App() {
     return getSavedActiveWorkout()?.sessionLogs || {};
   });
 
-  // Estado para expandir la imagen del ejercicio
-  const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
+  // Ejercicio actualmente activo/expandido en la sesión de entrenamiento (modo acordeón inteligente)
+  const [activeWorkoutExerciseId, setActiveWorkoutExerciseId] = useState<string | null>(() => {
+    const saved = getSavedActiveWorkout();
+    if (!saved || !saved.exercises || saved.exercises.length === 0) return null;
+    const incomplete = saved.exercises.find(ex => {
+      const series = saved.sessionLogs[ex.id] || [];
+      return series.length === 0 || series.some(s => !s.completed);
+    });
+    return incomplete ? incomplete.id : saved.exercises[0].id;
+  });
+
+  // Estado para previsualizar la técnica/imagen completa en modal (sin recortar)
+  const [previewExerciseImage, setPreviewExerciseImage] = useState<{
+    name: string;
+    imageUrl: string;
+    muscleGroup: string;
+  } | null>(null);
 
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
   
@@ -1445,6 +1459,10 @@ function App() {
     
     setWorkoutSessionLogs(initialSession);
     setWorkoutExercises(rExercises);
+    if (rExercises.length > 0) {
+      setActiveWorkoutExerciseId(rExercises[0].id);
+    }
+    setPreviewExerciseImage(null);
     setView('workout');
   };
 
@@ -1511,6 +1529,27 @@ function App() {
     list[seriesIndex] = series;
     copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
+
+    // Auto-avance inteligente: Si con esta serie se completaron TODAS las series de este ejercicio,
+    // avanzar automáticamente al siguiente ejercicio pendiente de la rutina
+    if (willBeCompleted) {
+      const isExerciseFinished = list.length > 0 && list.every(s => s.completed);
+      if (isExerciseFinished) {
+        const curIdx = workoutExercises.findIndex(e => e.id === exerciseId);
+        // Buscar el siguiente ejercicio en la rutina que aún tenga series incompletas
+        const nextIncomplete = workoutExercises.slice(curIdx + 1).find(e => {
+          const sList = copy[e.id] || [];
+          return sList.length === 0 || sList.some(s => !s.completed);
+        }) || workoutExercises.slice(0, curIdx).find(e => {
+          const sList = copy[e.id] || [];
+          return sList.length === 0 || sList.some(s => !s.completed);
+        });
+
+        if (nextIncomplete) {
+          setActiveWorkoutExerciseId(nextIncomplete.id);
+        }
+      }
+    }
   };
 
   const handleWorkoutValueChange = async (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
@@ -1619,6 +1658,8 @@ function App() {
     setWorkoutRoutine(null);
     setWorkoutSessionLogs({});
     setWorkoutExercises([]);
+    setActiveWorkoutExerciseId(null);
+    setPreviewExerciseImage(null);
     setView('dashboard');
     if (isOnline) {
       triggerSync();
@@ -1635,6 +1676,8 @@ function App() {
         setWorkoutRoutine(null);
         setWorkoutSessionLogs({});
         setWorkoutExercises([]);
+        setActiveWorkoutExerciseId(null);
+        setPreviewExerciseImage(null);
         setView('dashboard');
         if (isOnline) triggerSync();
       }
@@ -1644,6 +1687,8 @@ function App() {
         setWorkoutRoutine(null);
         setWorkoutSessionLogs({});
         setWorkoutExercises([]);
+        setActiveWorkoutExerciseId(null);
+        setPreviewExerciseImage(null);
         setView('dashboard');
       }
     }
@@ -3093,193 +3138,301 @@ function App() {
               </div>
             )}
 
-            {/* Lista de ejercicios para el entrenamiento */}
-            <div className="space-y-4">
+            {/* Lista de ejercicios para el entrenamiento (Modo Acordeón Inteligente) */}
+            <div className="space-y-3 sm:space-y-4">
               {workoutExercises.map((ex, idx) => {
-                  const series = workoutSessionLogs[ex.id] || [];
-                  const allCompleted = series.length > 0 && series.every(s => s.completed);
+                const series = workoutSessionLogs[ex.id] || [];
+                const completedSeriesCount = series.filter(s => s.completed).length;
+                const totalSeriesCount = series.length;
+                const allCompleted = totalSeriesCount > 0 && completedSeriesCount === totalSeriesCount;
+                const isExpanded = activeWorkoutExerciseId === ex.id;
+                const imgUrl = ex.image_data || getExerciseImage(ex.name);
 
+                if (!isExpanded) {
+                  // --- ESTADO CONTRAÍDO (Resumen compacto del ejercicio) ---
                   return (
                     <div 
-                      key={ex.id} 
-                      className={`glass-card rounded-2xl border transition-all ${
-                        allCompleted ? 'border-emerald-500/30 bg-emerald-950/5' : 'border-slate-900'
+                      key={ex.id}
+                      onClick={() => setActiveWorkoutExerciseId(ex.id)}
+                      className={`glass-card rounded-2xl border transition-all cursor-pointer p-3.5 sm:p-4 hover:border-slate-700/80 group ${
+                        allCompleted 
+                          ? 'border-emerald-500/30 bg-emerald-950/10' 
+                          : completedSeriesCount > 0
+                          ? 'border-emerald-500/20 bg-slate-900/50 hover:bg-slate-900/70'
+                          : 'border-slate-800/80 bg-slate-900/40 hover:bg-slate-900/60'
                       }`}
                     >
-                       {/* Cabecera del ejercicio */}
-                      <div className="px-4 py-3 flex items-center justify-between border-b border-slate-900/40">
-                        <div>
-                          <span className="text-[10px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                            {ex.muscle_group}
-                          </span>
-                          <h4 className="font-bold text-white text-sm mt-1">{ex.name}</h4>
-                          {/* Sugerencia de la última sesión */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Número o Check */}
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition-colors ${
+                            allCompleted 
+                              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20' 
+                              : completedSeriesCount > 0
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700/60'
+                          }`}>
+                            {allCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 shrink-0">
+                                {ex.muscle_group}
+                              </span>
+                              <h4 className="font-bold text-white text-sm truncate group-hover:text-emerald-300 transition-colors">
+                                {ex.name}
+                              </h4>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-[11px] font-semibold ${allCompleted ? 'text-emerald-400' : completedSeriesCount > 0 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                                {completedSeriesCount} de {totalSeriesCount} series {allCompleted ? '✓' : ''}
+                              </span>
+                              {series.length > 0 && (
+                                <span className="text-[10px] text-slate-500 font-medium hidden xs:inline">
+                                  • {series[0].weight} lb × {series[0].reps}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Derecha: Botón de técnica + Chevron expandir */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {imgUrl && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewExerciseImage({
+                                  name: ex.name,
+                                  imageUrl: imgUrl,
+                                  muscleGroup: ex.muscle_group
+                                });
+                              }}
+                              className="p-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 transition-all cursor-pointer"
+                              title="Ver técnica del ejercicio"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <div className="p-1 rounded-lg text-slate-500 group-hover:text-slate-300 transition-colors">
+                            <ChevronDown className="w-4 h-4" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // --- ESTADO EXPANDIDO (Ejercicio activo en foco para registrar series) ---
+                return (
+                  <div 
+                    key={ex.id}
+                    className={`glass-card rounded-2xl border transition-all overflow-hidden ${
+                      allCompleted 
+                        ? 'border-emerald-500/40 bg-emerald-950/15 shadow-xl shadow-emerald-500/5' 
+                        : 'border-emerald-500/40 bg-slate-900/80 shadow-2xl shadow-emerald-500/5 ring-1 ring-emerald-500/20'
+                    }`}
+                  >
+                    {/* Cabecera del ejercicio expandido */}
+                    <div className="p-3.5 sm:p-4 border-b border-slate-800/80 flex items-start justify-between gap-3 bg-slate-950/40">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 mt-0.5 ${
+                          allCompleted 
+                            ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20' 
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse'
+                        }`}>
+                          {allCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                              {ex.muscle_group}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-semibold">
+                              {completedSeriesCount} de {totalSeriesCount} series
+                            </span>
+                          </div>
+                          <h3 className="font-extrabold text-white text-base sm:text-lg mt-1 leading-tight">
+                            {ex.name}
+                          </h3>
                           {series.length > 0 && (
-                            <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
                               Sugerido (último): <span className="text-emerald-400 font-semibold">{series[0].weight} lb</span> × <span className="text-emerald-400 font-semibold">{series[0].reps} reps</span>
                             </p>
                           )}
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          {/* Botón para aplicar el peso a las siguientes series */}
-                          {series.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const firstWeight = series[0]?.weight;
-                                if (firstWeight !== undefined && firstWeight > 0) {
-                                  if (confirm(`¿Deseas aplicar ${firstWeight} a las siguientes series de "${ex.name}"?`)) {
-                                    handlePropagateSeriesValue(ex.id, 0, 'weight', firstWeight);
+                      </div>
+
+                      {/* Controles de la cabecera: Ver técnica + Aplicar a siguientes + Reordenar + Colapsar */}
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                        {/* Botón para abrir modal con la técnica/imagen completa sin recortar */}
+                        {imgUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewExerciseImage({
+                              name: ex.name,
+                              imageUrl: imgUrl,
+                              muscleGroup: ex.muscle_group
+                            })}
+                            className="text-[10px] font-bold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 px-2.5 py-1.5 rounded-xl border border-emerald-500/30 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:scale-[1.02]"
+                            title="Ver imagen y técnica completa"
+                          >
+                            <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="hidden xs:inline">Ver técnica</span>
+                          </button>
+                        )}
+
+                        {/* Botón para aplicar el peso a las siguientes series */}
+                        {series.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const firstWeight = series[0]?.weight;
+                              if (firstWeight !== undefined && firstWeight > 0) {
+                                if (confirm(`¿Deseas aplicar ${firstWeight} a las siguientes series de "${ex.name}"?`)) {
+                                  handlePropagateSeriesValue(ex.id, 0, 'weight', firstWeight);
+                                }
+                              }
+                            }}
+                            className="text-[10px] font-semibold text-slate-300 hover:text-emerald-300 bg-slate-900 hover:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-800 transition-all flex items-center gap-1 cursor-pointer"
+                            title="Copiar peso de la serie 1 a las demás"
+                          >
+                            <RefreshCw className="w-3 h-3 text-emerald-400" />
+                            <span className="hidden sm:inline">Aplicar a siguientes</span>
+                          </button>
+                        )}
+
+                        {/* Botones de Reordenamiento */}
+                        <div className="flex items-center gap-0.5 bg-slate-950 p-0.5 rounded-xl border border-slate-850">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveExercise(ex.id, 'up')}
+                            className="p-1 rounded-lg text-slate-500 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+                            title="Subir orden"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === workoutExercises.length - 1}
+                            onClick={() => handleMoveExercise(ex.id, 'down')}
+                            className="p-1 rounded-lg text-slate-500 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+                            title="Bajar orden"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Botón para colapsar */}
+                        <button
+                          type="button"
+                          onClick={() => setActiveWorkoutExerciseId(null)}
+                          className="p-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer ml-0.5"
+                          title="Colapsar ejercicio"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Tabla de series (Foco 100% en el entrenamiento, sin imagen recortada) */}
+                    <div className="p-3 sm:p-4 space-y-2">
+                      <div className="grid grid-cols-12 text-[10px] font-bold text-slate-500 uppercase px-2 mb-1 tracking-wider">
+                        <span className="col-span-2">Serie</span>
+                        <span className="col-span-4 text-center">Peso (lb)</span>
+                        <span className="col-span-4 text-center">Reps</span>
+                        <span className="col-span-2 text-right">Completado</span>
+                      </div>
+
+                      {series.map((s, sIdx) => (
+                        <div 
+                          key={sIdx} 
+                          className={`grid grid-cols-12 items-center gap-1.5 p-2 sm:p-2.5 rounded-xl border transition-all ${
+                            s.completed 
+                              ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' 
+                              : 'bg-slate-950/60 border-slate-800/60 hover:border-slate-700'
+                          }`}
+                        >
+                          <span className="col-span-2 text-xs font-black pl-2">{sIdx + 1}</span>
+                          
+                          {/* Input Peso */}
+                          <div className="col-span-4 flex justify-center">
+                            <input
+                              type="number"
+                              step="0.5"
+                              disabled={s.completed}
+                              value={s.weight !== undefined ? s.weight : ''}
+                              onChange={e => {
+                                const val = e.target.value;
+                                handleWorkoutValueChange(ex.id, sIdx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
+                              }}
+                              onBlur={e => {
+                                const val = parseFloat(e.target.value);
+                                if (!isNaN(val) && val > 0) {
+                                  const remaining = series.slice(sIdx + 1).filter(item => !item.completed);
+                                  if (remaining.length > 0 && remaining.some(item => item.weight !== val)) {
+                                    if (confirm(`¿Deseas aplicar ${val} a las siguientes ${remaining.length} series de "${ex.name}"?`)) {
+                                      handlePropagateSeriesValue(ex.id, sIdx, 'weight', val);
+                                    }
                                   }
                                 }
                               }}
-                              className="text-[9px] font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-all flex items-center gap-1 cursor-pointer mr-1"
-                              title="Copiar peso a las siguientes series"
-                            >
-                              <RefreshCw className="w-3 h-3" /> Aplicar a siguientes
-                            </button>
-                          )}
-
-                          {/* Botones de Reordenamiento */}
-                          <div className="flex items-center gap-1 mr-1">
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => handleMoveExercise(ex.id, 'up')}
-                              className="p-1 rounded-lg bg-slate-950 border border-slate-900 text-slate-500 hover:text-white disabled:opacity-30 disabled:hover:text-slate-500 transition-colors cursor-pointer"
-                              title="Subir orden"
-                            >
-                              <ChevronUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === workoutExercises.length - 1}
-                              onClick={() => handleMoveExercise(ex.id, 'down')}
-                              className="p-1 rounded-lg bg-slate-950 border border-slate-900 text-slate-500 hover:text-white disabled:opacity-30 disabled:hover:text-slate-500 transition-colors cursor-pointer"
-                              title="Bajar orden"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          
-                          {allCompleted && (
-                            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Imagen o Ilustración de Referencia */}
-                      {(() => {
-                        const imgUrl = ex.image_data || getExerciseImage(ex.name);
-                        const isExpanded = expandedExerciseId === ex.id;
-                        return imgUrl ? (
-                          <div 
-                            onClick={() => setExpandedExerciseId(isExpanded ? null : ex.id)}
-                            className={`w-full overflow-hidden bg-slate-950 relative border-b border-slate-900/40 flex items-center justify-center cursor-pointer transition-all duration-300 ${isExpanded ? 'h-72' : 'h-32'}`}
-                          >
-                            <img 
-                              src={imgUrl} 
-                              alt={ex.name} 
-                              className={`w-full h-full opacity-80 transition-all duration-300 ${isExpanded ? 'object-contain' : 'object-cover'}`}
+                              className="w-20 bg-slate-900 border border-slate-800 rounded-lg py-1.5 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 to-transparent pointer-events-none"></div>
-                            
-                            {/* Indicador visual de zoom */}
-                            <div className="absolute top-2 right-2 bg-slate-950/80 px-2 py-0.5 rounded-md text-[8px] font-bold text-slate-400 border border-slate-900 pointer-events-none tracking-wider uppercase">
-                              {isExpanded ? 'Ver menos' : 'Ampliar'}
-                            </div>
                           </div>
-                        ) : (
-                          // Placeholder estilizado con mancuerna
-                          <div className="w-full h-16 bg-slate-950/40 border-b border-slate-900/40 flex items-center gap-3 px-4 py-3">
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shrink-0">
-                              <Dumbbell className="w-4 h-4 text-emerald-400" />
-                            </div>
-                            <div>
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Ilustración Genérica</p>
-                              <p className="text-xs text-slate-300">Mantén buena técnica y rango completo</p>
-                            </div>
-                          </div>
-                        );
-                      })()}
 
-                      {/* Lista de series */}
-                      <div className="p-3 space-y-2">
-                        <div className="grid grid-cols-12 text-[10px] font-bold text-slate-500 uppercase px-2 mb-1">
-                          <span className="col-span-2">Serie</span>
-                          <span className="col-span-4 text-center">Peso (lb)</span>
-                          <span className="col-span-4 text-center">Reps</span>
-                          <span className="col-span-2 text-right">Completado</span>
+                          {/* Input Reps */}
+                          <div className="col-span-4 flex justify-center">
+                            <input
+                              type="number"
+                              disabled={s.completed}
+                              value={s.reps !== undefined ? s.reps : ''}
+                              onChange={e => {
+                                const val = e.target.value;
+                                handleWorkoutValueChange(ex.id, sIdx, 'reps', val === '' ? '' : (parseInt(val) || 0));
+                              }}
+                              className="w-20 bg-slate-900 border border-slate-800 rounded-lg py-1.5 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
+                            />
+                          </div>
+
+                          {/* Botón Completado */}
+                          <div className="col-span-2 flex justify-end pr-1">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleWorkoutSeries(ex.id, sIdx)}
+                              className={`w-7 h-7 rounded-xl flex items-center justify-center border transition-all cursor-pointer ${
+                                s.completed
+                                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20 hover:scale-105'
+                                  : 'bg-slate-900 text-slate-600 border-slate-800 hover:border-slate-700 hover:text-slate-400'
+                              }`}
+                            >
+                              <Check className="w-4 h-4 stroke-[3]" />
+                            </button>
+                          </div>
                         </div>
+                      ))}
 
-                        {series.map((s, idx) => (
-                          <div 
-                            key={idx} 
-                            className={`grid grid-cols-12 items-center gap-1 p-2 rounded-xl border transition-all ${
-                              s.completed 
-                                ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-300' 
-                                : 'bg-slate-900/40 border-slate-800/40'
-                            }`}
+                      {/* Botón para pasar al siguiente ejercicio si no es el último */}
+                      {idx < workoutExercises.length - 1 && (
+                        <div className="pt-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setActiveWorkoutExerciseId(workoutExercises[idx + 1].id)}
+                            className="text-xs text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer font-medium py-1 px-2"
                           >
-                            <span className="col-span-2 text-xs font-bold pl-2">{idx + 1}</span>
-                            
-                            {/* Inputs de Peso y Reps */}
-                            <div className="col-span-4 flex justify-center">
-                              <input
-                                type="number"
-                                step="0.5"
-                                disabled={s.completed}
-                                value={s.weight !== undefined ? s.weight : ''}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  handleWorkoutValueChange(ex.id, idx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
-                                }}
-                                onBlur={e => {
-                                  const val = parseFloat(e.target.value);
-                                  if (!isNaN(val) && val > 0) {
-                                    const remaining = series.slice(idx + 1).filter(item => !item.completed);
-                                    if (remaining.length > 0 && remaining.some(item => item.weight !== val)) {
-                                      if (confirm(`¿Deseas aplicar ${val} a las siguientes ${remaining.length} series de "${ex.name}"?`)) {
-                                        handlePropagateSeriesValue(ex.id, idx, 'weight', val);
-                                      }
-                                    }
-                                  }
-                                }}
-                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
-                              />
-                            </div>
-                            <div className="col-span-4 flex justify-center">
-                              <input
-                                type="number"
-                                disabled={s.completed}
-                                value={s.reps !== undefined ? s.reps : ''}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  handleWorkoutValueChange(ex.id, idx, 'reps', val === '' ? '' : (parseInt(val) || 0));
-                                }}
-                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
-                              />
-                            </div>
-
-                            {/* Botón Completado */}
-                            <div className="col-span-2 flex justify-end pr-1">
-                              <button
-                                onClick={() => handleToggleWorkoutSeries(ex.id, idx)}
-                                className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all ${
-                                  s.completed
-                                    ? 'bg-emerald-500 text-slate-950 border-emerald-400'
-                                    : 'bg-slate-950 text-slate-600 border-slate-800 hover:border-slate-700'
-                                }`}
-                              >
-                                <Check className="w-3.5 h-3.5 stroke-[3px]" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                            <span>Siguiente: {workoutExercises[idx + 1].name}</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Terminar Entrenamiento */}
@@ -3600,6 +3753,59 @@ function App() {
                 Cerrar Sesión
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE TÉCNICA E ILUSTRACIÓN COMPLETA (SIN RECORTES) */}
+      {previewExerciseImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in"
+          onClick={() => setPreviewExerciseImage(null)}
+        >
+          <div 
+            className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative overflow-hidden space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header del Modal */}
+            <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-800">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  {previewExerciseImage.muscleGroup} • Técnica & Postura
+                </span>
+                <h3 className="text-lg sm:text-xl font-extrabold text-white mt-1.5 leading-tight">
+                  {previewExerciseImage.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setPreviewExerciseImage(null)}
+                className="w-8 h-8 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Contenedor de la Imagen: COMPLETA, SIN RECORTES */}
+            <div className="w-full h-72 sm:h-80 bg-slate-950 rounded-2xl border border-slate-800/80 p-3 flex items-center justify-center overflow-hidden relative">
+              <img 
+                src={previewExerciseImage.imageUrl} 
+                alt={previewExerciseImage.name}
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+
+            {/* Consejos de postura y botón de volver */}
+            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 text-xs text-slate-400 space-y-1">
+              <p className="font-semibold text-slate-300">💡 Indicaciones clave:</p>
+              <p>Mantén el rango de movimiento completo, controla la fase de bajada (excéntrica) y cuida la respiración durante cada repetición.</p>
+            </div>
+
+            <button
+              onClick={() => setPreviewExerciseImage(null)}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
+            >
+              Volver a las series
+            </button>
           </div>
         </div>
       )}
