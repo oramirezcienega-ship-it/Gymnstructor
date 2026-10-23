@@ -3,6 +3,8 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
   }
   
   body {

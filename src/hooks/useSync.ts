@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { db } from '../db/db';
 import { supabase } from '../supabaseClient';
 
@@ -11,6 +11,10 @@ export function useSync(
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const syncInProgressRef = useRef(false);
+
+  const isDuplicateKeyError = (err: any) =>
+    Boolean(err && (err.code === '23505' || err.message?.includes('duplicate key') || err.message?.includes('unique constraint')));
 
   // Inicializar perfil del usuario localmente en IndexedDB
   const ensureUserProfile = useCallback(async () => {
@@ -98,7 +102,7 @@ export function useSync(
           success = true;
         }
       } else {
-        const { error: insertError } = await supabase.from('profiles').insert({
+        const { error: insertError } = await supabase.from('profiles').upsert({
           id: profile.id,
           email: profile.email,
           name: profile.name || '',
@@ -108,7 +112,7 @@ export function useSync(
           created_at: profile.created_at,
           updated_at: profile.updated_at,
         });
-        if (!insertError) success = true;
+        if (!insertError || isDuplicateKeyError(insertError)) success = true;
         else {
           console.error('Error inserting profile:', insertError);
           errors.push(`Perfil (insertar): ${insertError.message}`);
@@ -167,7 +171,7 @@ export function useSync(
           success = true;
         }
       } else {
-        const { error: insertError } = await supabase.from('routines').insert({
+        const { error: insertError } = await supabase.from('routines').upsert({
           id: routine.id,
           user_id: routine.user_id,
           name: routine.name,
@@ -176,7 +180,7 @@ export function useSync(
           created_at: routine.created_at,
           updated_at: routine.updated_at,
         });
-        if (!insertError) success = true;
+        if (!insertError || isDuplicateKeyError(insertError)) success = true;
         else {
           console.error('Error inserting routine:', insertError);
           errors.push(`Rutina (insertar): ${insertError.message}`);
@@ -243,7 +247,7 @@ export function useSync(
             success = true;
           }
         } else {
-          const { error: insertError } = await supabase.from('exercises').insert({
+          const { error: insertError } = await supabase.from('exercises').upsert({
             id: exercise.id,
             routine_id: exercise.routine_id,
             name: exercise.name,
@@ -257,8 +261,9 @@ export function useSync(
             updated_at: exercise.updated_at,
             image_data: exercise.image_data,
           });
-          if (!insertError) success = true;
-          else {
+          if (!insertError || isDuplicateKeyError(insertError)) {
+            success = true;
+          } else {
             console.error('Error inserting exercise:', insertError);
             errors.push(`Ejercicio (insertar): ${insertError.message}`);
           }
@@ -320,7 +325,7 @@ export function useSync(
               success = true;
             }
           } else {
-            const { error: insertError } = await supabase.from('workout_logs').insert({
+            const { error: insertError } = await supabase.from('workout_logs').upsert({
               id: log.id,
               exercise_id: log.exercise_id,
               weight_lifted: log.weight_lifted,
@@ -330,8 +335,9 @@ export function useSync(
               created_at: log.created_at,
               updated_at: log.updated_at,
             });
-            if (!insertError) success = true;
-            else {
+            if (!insertError || isDuplicateKeyError(insertError)) {
+              success = true;
+            } else {
               console.error('Error inserting workout log:', insertError);
               errors.push(`Registro de entreno (insertar): ${insertError.message}`);
             }
@@ -398,7 +404,7 @@ export function useSync(
           success = true;
         }
       } else {
-        const { error: insertError } = await supabase.from('body_metrics').insert({
+        const { error: insertError } = await supabase.from('body_metrics').upsert({
           id: metric.id,
           user_id: metric.user_id,
           weight: metric.weight,
@@ -413,8 +419,9 @@ export function useSync(
           created_at: metric.created_at,
           updated_at: metric.updated_at,
         });
-        if (!insertError) success = true;
-        else {
+        if (!insertError || isDuplicateKeyError(insertError)) {
+          success = true;
+        } else {
           console.error('Error inserting body metric:', insertError);
           errors.push(`Métricas corporales (insertar): ${insertError.message}`);
         }
@@ -658,7 +665,12 @@ export function useSync(
 
   // Función principal de disparo de sincronización
   const triggerSync = useCallback(async (force = false) => {
-    if (!navigator.onLine || (!force && isSyncing) || !currentUserId) return;
+    if (!navigator.onLine || !currentUserId) return;
+    if (syncInProgressRef.current) {
+      console.log('Sincronización ya en curso, omitiendo ejecución simultánea');
+      return;
+    }
+    syncInProgressRef.current = true;
     setIsSyncing(true);
     if (force) {
       setSyncError(null);
@@ -679,9 +691,10 @@ export function useSync(
       const errMsg = error?.message || String(error) || 'Error desconocido de sincronización';
       setSyncError(errMsg);
     } finally {
+      syncInProgressRef.current = false;
       setIsSyncing(false);
     }
-  }, [currentUserId, forceResetSyncStatus, ensureUserProfile, pushLocalChanges, pullServerChanges, updatePendingCount, isSyncing]);
+  }, [currentUserId, forceResetSyncStatus, ensureUserProfile, pushLocalChanges, pullServerChanges, updatePendingCount]);
 
   // Manejo de eventos online/offline y conteo de carga inicial
   useEffect(() => {

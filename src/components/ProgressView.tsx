@@ -26,7 +26,9 @@ import {
   Brain,
   Award,
   Target,
-  ShieldCheck
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
 interface ProgressViewProps {
@@ -250,6 +252,11 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   // Estados para vista del histórico (tabla vs tarjetas y orden)
   const [historyViewMode, setHistoryViewMode] = useState<'table' | 'cards'>('table');
   const [historySortOrder, setHistorySortOrder] = useState<'desc' | 'asc'>('desc');
+
+  // Estados para secciones contraíbles (por defecto contraídas para optimizar espacio y visualización)
+  const [isAiAnalysisOpen, setIsAiAnalysisOpen] = useState(false);
+  const [isGeneralDataOpen, setIsGeneralDataOpen] = useState(false);
+  const [isNewMetricOpen, setIsNewMetricOpen] = useState(false);
 
   // Estados del formulario para nueva medición
   const [weightInput, setWeightInput] = useState<string>('');
@@ -827,17 +834,22 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
         </div>
       </div>
 
-      {/* ================= PANEL DE ANÁLISIS INTELIGENTE DE IA & LOGROS ================= */}
+      {/* ================= PANEL DE ANÁLISIS INTELIGENTE DE IA & LOGROS (CONTRAÍBLE) ================= */}
       {aiAnalysis.hasData && (
-        <div className="glass-card rounded-3xl p-5 sm:p-6 border border-emerald-500/30 bg-gradient-to-br from-slate-900/95 via-emerald-950/20 to-slate-900/90 shadow-2xl shadow-emerald-500/5 relative overflow-hidden">
+        <div className="glass-card rounded-3xl p-4 sm:p-5 border border-emerald-500/30 bg-gradient-to-br from-slate-900/95 via-emerald-950/20 to-slate-900/90 shadow-2xl shadow-emerald-500/5 relative overflow-hidden transition-all duration-300">
           {/* Decoración de fondo sutil con brillo */}
           <div className="absolute top-0 right-0 -translate-y-8 translate-x-8 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
           <div className="absolute bottom-0 left-1/3 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
 
-          {/* Cabecera del Panel IA */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80 relative z-10">
+          {/* Cabecera del Panel IA (Clickeable para expandir/contraer) */}
+          <div 
+            onClick={() => setIsAiAnalysisOpen(!isAiAnalysisOpen)}
+            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10 cursor-pointer select-none transition-colors group ${
+              isAiAnalysisOpen ? 'pb-4 border-b border-slate-800/80' : ''
+            }`}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500/20 to-cyan-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-md shadow-emerald-500/10 shrink-0">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500/20 to-cyan-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-md shadow-emerald-500/10 shrink-0 group-hover:scale-105 transition-transform">
                 <Brain className="w-5 h-5 animate-pulse" />
               </div>
               <div>
@@ -855,114 +867,113 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
               </div>
             </div>
 
-            {/* Resumen rápido de progreso */}
-            {aiAnalysis.deltas && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Peso Total</span>
-                  <span className={`text-xs font-black ${aiAnalysis.deltas.weight <= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {aiAnalysis.deltas.weight > 0 ? `+${aiAnalysis.deltas.weight}` : aiAnalysis.deltas.weight} kg
-                  </span>
-                </div>
-                {aiAnalysis.deltas.bodyFat !== null && (
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">% Grasa</span>
-                    <span className={`text-xs font-black ${aiAnalysis.deltas.bodyFat <= 0 ? 'text-amber-300' : 'text-slate-300'}`}>
-                      {aiAnalysis.deltas.bodyFat > 0 ? `+${aiAnalysis.deltas.bodyFat}` : aiAnalysis.deltas.bodyFat}%
+            {/* Resumen rápido de progreso y botón toggle */}
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-between sm:justify-end">
+              {aiAnalysis.deltas && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-2.5 py-1 text-center">
+                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Peso</span>
+                    <span className={`text-[11px] font-black ${aiAnalysis.deltas.weight <= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {aiAnalysis.deltas.weight > 0 ? `+${aiAnalysis.deltas.weight}` : aiAnalysis.deltas.weight} kg
                     </span>
                   </div>
-                )}
-                {aiAnalysis.deltas.muscleMass !== null && (
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">% Músculo</span>
-                    <span className={`text-xs font-black ${aiAnalysis.deltas.muscleMass >= 0 ? 'text-cyan-400' : 'text-slate-400'}`}>
-                      {aiAnalysis.deltas.muscleMass > 0 ? `+${aiAnalysis.deltas.muscleMass}` : aiAnalysis.deltas.muscleMass}%
-                    </span>
-                  </div>
-                )}
-                {aiAnalysis.deltas.visceralFat !== null && (
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Grasa Visc.</span>
-                    <span className={`text-xs font-black ${aiAnalysis.deltas.visceralFat <= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {aiAnalysis.deltas.visceralFat > 0 ? `+${aiAnalysis.deltas.visceralFat}` : aiAnalysis.deltas.visceralFat} nivel
-                    </span>
-                  </div>
-                )}
-                {aiAnalysis.deltas.bodyAge !== null && (
-                  <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-3 py-1.5 text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Edad Corp.</span>
-                    <span className={`text-xs font-black ${aiAnalysis.deltas.bodyAge <= 0 ? 'text-indigo-400' : 'text-slate-400'}`}>
-                      {aiAnalysis.deltas.bodyAge > 0 ? `+${aiAnalysis.deltas.bodyAge}` : aiAnalysis.deltas.bodyAge} años
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Cuerpo del Análisis: Texto diagnóstico y Consejos */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-4 relative z-10">
-            {/* Diagnóstico narrativo */}
-            <div className="lg:col-span-8 space-y-3">
-              <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-normal">
-                {aiAnalysis.summary}
-              </p>
-
-              {/* Logros / Hitos alcanzados */}
-              {aiAnalysis.achievements.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Award className="w-3.5 h-3.5 text-amber-400" /> Logros e Hitos Detectados
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-                    {aiAnalysis.achievements.map(ach => (
-                      <div 
-                        key={ach.id}
-                        className="bg-slate-950/60 border border-slate-800/90 hover:border-slate-700/80 rounded-xl p-2.5 flex items-start justify-between gap-2 transition-all"
-                      >
-                        <div>
-                          <p className="text-xs font-bold text-white leading-tight">{ach.title}</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{ach.description}</p>
-                        </div>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
-                          ach.type === 'positive' 
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                            : ach.type === 'muscle'
-                            ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
-                            : ach.type === 'fire'
-                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                            : 'bg-slate-800 text-slate-300 border-slate-700'
-                        }`}>
-                          {ach.badgeText}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  {aiAnalysis.deltas.bodyFat !== null && (
+                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-2.5 py-1 text-center">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">% Grasa</span>
+                      <span className={`text-[11px] font-black ${aiAnalysis.deltas.bodyFat <= 0 ? 'text-amber-300' : 'text-slate-300'}`}>
+                        {aiAnalysis.deltas.bodyFat > 0 ? `+${aiAnalysis.deltas.bodyFat}` : aiAnalysis.deltas.bodyFat}%
+                      </span>
+                    </div>
+                  )}
+                  {aiAnalysis.deltas.muscleMass !== null && (
+                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl px-2.5 py-1 text-center">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">% Músculo</span>
+                      <span className={`text-[11px] font-black ${aiAnalysis.deltas.muscleMass >= 0 ? 'text-cyan-400' : 'text-slate-400'}`}>
+                        {aiAnalysis.deltas.muscleMass > 0 ? `+${aiAnalysis.deltas.muscleMass}` : aiAnalysis.deltas.muscleMass}%
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
 
-            {/* Consejo del Coach IA */}
-            <div className="lg:col-span-4 bg-emerald-950/20 border border-emerald-500/30 rounded-2xl p-4 flex flex-col justify-between space-y-3">
-              <div>
-                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                  <Target className="w-3.5 h-3.5 text-emerald-400" /> Siguiente Paso Recomendado
-                </span>
-                <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                  {aiAnalysis.coachTip}
+              <button 
+                type="button"
+                className="flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-1.5 rounded-xl transition-all shrink-0 ml-auto sm:ml-0 cursor-pointer"
+              >
+                {isAiAnalysisOpen ? (
+                  <>Contraer <ChevronUp className="w-3.5 h-3.5" /></>
+                ) : (
+                  <>Ver análisis <ChevronDown className="w-3.5 h-3.5" /></>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Cuerpo del Análisis: Texto diagnóstico y Consejos (visible si isAiAnalysisOpen === true) */}
+          {isAiAnalysisOpen && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-4 relative z-10 animate-in fade-in duration-200">
+              {/* Diagnóstico narrativo */}
+              <div className="lg:col-span-8 space-y-3">
+                <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-normal">
+                  {aiAnalysis.summary}
                 </p>
+
+                {/* Logros / Hitos alcanzados */}
+                {aiAnalysis.achievements.length > 0 && (
+                  <div className="space-y-2 pt-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Award className="w-3.5 h-3.5 text-amber-400" /> Logros e Hitos Detectados
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                      {aiAnalysis.achievements.map(ach => (
+                        <div 
+                          key={ach.id}
+                          className="bg-slate-950/60 border border-slate-800/90 hover:border-slate-700/80 rounded-xl p-2.5 flex items-start justify-between gap-2 transition-all"
+                        >
+                          <div>
+                            <p className="text-xs font-bold text-white leading-tight">{ach.title}</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{ach.description}</p>
+                          </div>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border shrink-0 ${
+                            ach.type === 'positive' 
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : ach.type === 'muscle'
+                              ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+                              : ach.type === 'fire'
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                              : 'bg-slate-800 text-slate-300 border-slate-700'
+                          }`}>
+                            {ach.badgeText}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {aiAnalysis.latestMetrics && (
-                <div className="pt-2 border-t border-emerald-500/20 flex items-center justify-between text-[10px] text-slate-400">
-                  <span>Último análisis: {formatDate(aiAnalysis.latestMetrics.logged_at)}</span>
-                  <span className="text-emerald-400 font-bold flex items-center gap-1">
-                    <ShieldCheck className="w-3.5 h-3.5" /> Estado Óptimo
+              {/* Consejo del Coach IA */}
+              <div className="lg:col-span-4 bg-emerald-950/20 border border-emerald-500/30 rounded-2xl p-4 flex flex-col justify-between space-y-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                    <Target className="w-3.5 h-3.5 text-emerald-400" /> Siguiente Paso Recomendado
                   </span>
+                  <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                    {aiAnalysis.coachTip}
+                  </p>
                 </div>
-              )}
+
+                {aiAnalysis.latestMetrics && (
+                  <div className="pt-2 border-t border-emerald-500/20 flex items-center justify-between text-[10px] text-slate-400">
+                    <span>Último análisis: {formatDate(aiAnalysis.latestMetrics.logged_at)}</span>
+                    <span className="text-emerald-400 font-bold flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5" /> Estado Óptimo
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -972,58 +983,87 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
         {/* ================= COLUMNA IZQUIERDA: DATOS DEL ATLETA & REGISTRO (4 COLS EN DESKTOP) ================= */}
         <div className="lg:col-span-4 space-y-6">
 
-          {/* 1. FICHA GENERAL DE PERFIL FÍSICO */}
-          <div className="glass-card rounded-2xl p-4 sm:p-5 border border-slate-800/80 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                <User className="w-4 h-4 text-emerald-400" /> Datos Generales
-              </h3>
-              <span className="text-[10px] text-slate-500 font-medium">Perfil biométrico</span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Altura (cm)</label>
-                <input
-                  type="number"
-                  value={userHeight || ''}
-                  onChange={e => setUserHeight(Number(e.target.value) || 0)}
-                  placeholder="Ej: 175"
-                  className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-bold"
-                />
-              </div>
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sexo Biológico</label>
-                <select
-                  value={userGender}
-                  onChange={e => setUserGender(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500/50 font-medium"
-                >
-                  <option value="">Selecciona</option>
-                  <option value="Masculino">Masculino</option>
-                  <option value="Femenino">Femenino</option>
-                  <option value="Otro">Otro</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nacimiento</label>
-                <input
-                  type="date"
-                  value={userBirthDate}
-                  onChange={e => setUserBirthDate(e.target.value)}
-                  className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2 py-2 text-[11px] text-white focus:outline-none focus:border-emerald-500/50 text-center"
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={handleSavePhysicalProfile}
-              disabled={isSavingProfile}
-              className="w-full bg-slate-900 hover:bg-slate-850 text-slate-200 hover:text-emerald-300 border border-slate-800 hover:border-emerald-500/30 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+          {/* 1. FICHA GENERAL DE PERFIL FÍSICO (CONTRAÍBLE) */}
+          <div className="glass-card rounded-2xl p-4 sm:p-5 border border-slate-800/80 transition-all duration-300">
+            <div 
+              onClick={() => setIsGeneralDataOpen(!isGeneralDataOpen)}
+              className="flex items-center justify-between cursor-pointer select-none group"
             >
-              <Save className="w-3.5 h-3.5 text-emerald-400" />
-              {isSavingProfile ? 'Guardando...' : 'Guardar Datos Físicos'}
-            </button>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <User className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider group-hover:text-white transition-colors">
+                    Datos Generales
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-medium">
+                    {userHeight ? `${userHeight} cm` : 'Sin altura'} • {userGender || 'Sin definir'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold text-slate-400 group-hover:text-slate-300 hidden sm:inline">
+                  {isGeneralDataOpen ? 'Contraer' : 'Editar'}
+                </span>
+                <div className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 group-hover:text-emerald-400 transition-colors">
+                  {isGeneralDataOpen ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {isGeneralDataOpen && (
+              <div className="space-y-4 pt-4 border-t border-slate-800/60 mt-4 animate-in fade-in duration-200">
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Altura (cm)</label>
+                    <input
+                      type="number"
+                      value={userHeight || ''}
+                      onChange={e => setUserHeight(Number(e.target.value) || 0)}
+                      placeholder="Ej: 175"
+                      className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50 text-center font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sexo Biológico</label>
+                    <select
+                      value={userGender}
+                      onChange={e => setUserGender(e.target.value)}
+                      className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500/50 font-medium"
+                    >
+                      <option value="">Selecciona</option>
+                      <option value="Masculino">Masculino</option>
+                      <option value="Femenino">Femenino</option>
+                      <option value="Otro">Otro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nacimiento</label>
+                    <input
+                      type="date"
+                      value={userBirthDate}
+                      onChange={e => setUserBirthDate(e.target.value)}
+                      className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2 py-2 text-[11px] text-white focus:outline-none focus:border-emerald-500/50 text-center"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSavePhysicalProfile}
+                  disabled={isSavingProfile}
+                  className="w-full bg-slate-900 hover:bg-slate-850 text-slate-200 hover:text-emerald-300 border border-slate-800 hover:border-emerald-500/30 text-xs font-bold py-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Save className="w-3.5 h-3.5 text-emerald-400" />
+                  {isSavingProfile ? 'Guardando...' : 'Guardar Datos Físicos'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* 2. DIAGNÓSTICO INTELIGENTE DE IMC */}
@@ -1071,143 +1111,170 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
             </div>
           )}
 
-          {/* 3. FORMULARIO PARA REGISTRAR NUEVA MEDICIÓN */}
-          <div className="glass-card rounded-2xl p-4 sm:p-5 border border-slate-800/80 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                <Plus className="w-4 h-4 text-emerald-400" /> Registrar Nueva Medición
-              </h3>
-              <span className="text-[10px] text-slate-500">Bioimpedancia / Báscula</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              {/* 1. PESO / WEIGHT */}
-              <div className="col-span-2 sm:col-span-1 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-emerald-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <Scale className="w-3 h-3" /> 1. Peso (kg) *
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Ej: 75.4"
-                  value={weightInput}
-                  onChange={e => {
-                    const w = e.target.value;
-                    setWeightInput(w);
-                    if (userHeight > 0 && w && !isNaN(Number(w))) {
-                      const calc = (Number(w) / ((userHeight / 100) * (userHeight / 100))).toFixed(1);
-                      setBmiInput(calc);
-                    }
-                  }}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-black text-center"
-                />
-              </div>
-
-              {/* 2. IMC */}
-              <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-purple-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <Activity className="w-3 h-3" /> 2. IMC / BMI
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Ej: 24.2"
-                  value={bmiInput}
-                  onChange={e => setBmiInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 font-bold text-center"
-                />
-              </div>
-
-              {/* 3. % GRASA */}
-              <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-amber-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <Droplets className="w-3 h-3" /> 3. % Grasa
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Ej: 15.2"
-                  value={fatInput}
-                  onChange={e => setFatInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-bold text-center"
-                />
-              </div>
-
-              {/* 4. % MÚSCULO ESQUELÉTICO */}
-              <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-cyan-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <Zap className="w-3 h-3" /> 4. % Mús. Esq.
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  placeholder="Ej: 42.1"
-                  value={muscleInput}
-                  onChange={e => setMuscleInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 font-bold text-center"
-                />
-              </div>
-
-              {/* 5. METABOLISMO BASAL */}
-              <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-rose-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <Flame className="w-3 h-3" /> 5. Metab. (kcal)
-                </label>
-                <input
-                  type="number"
-                  placeholder="Ej: 1650"
-                  value={bmrInput}
-                  onChange={e => setBmrInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-rose-500 font-bold text-center"
-                />
-              </div>
-
-              {/* 6. EDAD CORPORAL */}
-              <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-indigo-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> 6. Edad Corp.
-                </label>
-                <input
-                  type="number"
-                  placeholder="Ej: 28"
-                  value={bodyAgeInput}
-                  onChange={e => setBodyAgeInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-bold text-center"
-                />
-              </div>
-
-              {/* 7. GRASA VISCERAL */}
-              <div className="col-span-2 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                <label className="block text-[9px] font-bold text-red-400 uppercase tracking-wider mb-1 flex items-center gap-1">
-                  <HeartPulse className="w-3 h-3" /> 7. Grasa Visceral (nivel 1-30)
-                </label>
-                <input
-                  type="number"
-                  placeholder="Ej: 5"
-                  value={visceralFatInput}
-                  onChange={e => setVisceralFatInput(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-red-500 font-bold text-center"
-                />
-              </div>
-            </div>
-
-            {/* Fecha */}
-            <div>
-              <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Fecha de Medición</label>
-              <input
-                type="date"
-                value={metricDate}
-                onChange={e => setMetricDate(e.target.value)}
-                className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 text-center font-medium"
-              />
-            </div>
-
-            <button
-              onClick={handleSaveMetric}
-              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer text-xs"
+          {/* 3. FORMULARIO PARA REGISTRAR NUEVA MEDICIÓN (CONTRAÍBLE) */}
+          <div className="glass-card rounded-2xl p-4 sm:p-5 border border-slate-800/80 transition-all duration-300">
+            <div 
+              onClick={() => setIsNewMetricOpen(!isNewMetricOpen)}
+              className="flex items-center justify-between cursor-pointer select-none group"
             >
-              <Plus className="w-4 h-4" /> Registrar Peso / Mediciones
-            </button>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                  <Plus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider group-hover:text-white transition-colors">
+                    Registrar Nueva Medición
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-medium">Bioimpedancia / Báscula</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold text-emerald-400 group-hover:text-emerald-300 hidden sm:inline">
+                  {isNewMetricOpen ? 'Contraer' : '+ Nuevo registro'}
+                </span>
+                <div className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 group-hover:text-emerald-400 transition-colors">
+                  {isNewMetricOpen ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {isNewMetricOpen && (
+              <div className="space-y-4 pt-4 border-t border-slate-800/60 mt-4 animate-in fade-in duration-200">
+                <div className="grid grid-cols-2 gap-2.5">
+                  {/* 1. PESO / WEIGHT */}
+                  <div className="col-span-2 sm:col-span-1 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-emerald-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Scale className="w-3 h-3" /> 1. Peso (kg) *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Ej: 75.4"
+                      value={weightInput}
+                      onChange={e => {
+                        const w = e.target.value;
+                        setWeightInput(w);
+                        if (userHeight > 0 && w && !isNaN(Number(w))) {
+                          const calc = (Number(w) / ((userHeight / 100) * (userHeight / 100))).toFixed(1);
+                          setBmiInput(calc);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-emerald-500 font-black text-center"
+                    />
+                  </div>
+
+                  {/* 2. IMC */}
+                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-purple-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Activity className="w-3 h-3" /> 2. IMC / BMI
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Ej: 24.2"
+                      value={bmiInput}
+                      onChange={e => setBmiInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 font-bold text-center"
+                    />
+                  </div>
+
+                  {/* 3. % GRASA */}
+                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-amber-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Droplets className="w-3 h-3" /> 3. % Grasa
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Ej: 15.2"
+                      value={fatInput}
+                      onChange={e => setFatInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-bold text-center"
+                    />
+                  </div>
+
+                  {/* 4. % MÚSCULO ESQUELÉTICO */}
+                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-cyan-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Zap className="w-3 h-3" /> 4. % Mús. Esq.
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      placeholder="Ej: 42.1"
+                      value={muscleInput}
+                      onChange={e => setMuscleInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 font-bold text-center"
+                    />
+                  </div>
+
+                  {/* 5. METABOLISMO BASAL */}
+                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-rose-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Flame className="w-3 h-3" /> 5. Metab. (kcal)
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Ej: 1650"
+                      value={bmrInput}
+                      onChange={e => setBmrInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-rose-500 font-bold text-center"
+                    />
+                  </div>
+
+                  {/* 6. EDAD CORPORAL */}
+                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-indigo-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> 6. Edad Corp.
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Ej: 28"
+                      value={bodyAgeInput}
+                      onChange={e => setBodyAgeInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-bold text-center"
+                    />
+                  </div>
+
+                  {/* 7. GRASA VISCERAL */}
+                  <div className="col-span-2 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                    <label className="block text-[9px] font-bold text-red-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                      <HeartPulse className="w-3 h-3" /> 7. Grasa Visceral (nivel 1-30)
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Ej: 5"
+                      value={visceralFatInput}
+                      onChange={e => setVisceralFatInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-red-500 font-bold text-center"
+                    />
+                  </div>
+                </div>
+
+                {/* Fecha */}
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Fecha de Medición</label>
+                  <input
+                    type="date"
+                    value={metricDate}
+                    onChange={e => setMetricDate(e.target.value)}
+                    className="w-full bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 text-center font-medium"
+                  />
+                </div>
+
+                <button
+                  onClick={handleSaveMetric}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer text-xs"
+                >
+                  <Plus className="w-4 h-4" /> Registrar Peso / Mediciones
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

@@ -24,7 +24,6 @@ import {
   TrendingUp,
   Play,
   ArrowLeft,
-  CheckCircle2,
   AlertCircle,
   Lock,
   User,
@@ -51,9 +50,11 @@ const getExerciseImage = (name: string): string | null => {
 const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): string => {
   const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase();
   if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('gluteo') || norm.includes('pantorrilla')) return 'Piernas';
+  if ((norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) && (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal'))) return 'Core & Hombros';
+  if (norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) return 'Hombros';
+  if (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal')) return 'Core';
   if (norm.includes('empuje') || norm.includes('push') || norm.includes('pecho') || norm.includes('tricep') || norm.includes('trícep')) return 'Empuje / Pecho';
   if (norm.includes('jalon') || norm.includes('jalón') || norm.includes('pull') || norm.includes('espalda') || norm.includes('bicep') || norm.includes('bícep')) return 'Jalón / Espalda';
-  if (norm.includes('hombro') || norm.includes('militar')) return 'Hombros';
   if (norm.includes('full') || norm.includes('cuerpo')) return 'Full Body';
   
   if (rExercises.length > 0) {
@@ -68,7 +69,7 @@ const getRoutineCategory = (routine: LocalRoutine, rExercises: Partial<LocalExer
   return 'General';
 };
 
-export type SplitType = 'pierna' | 'espalda_biceps' | 'pecho_triceps';
+export type SplitType = 'pierna' | 'espalda_biceps' | 'pecho_triceps' | 'core_hombros';
 
 export interface SplitDefinition {
   key: SplitType;
@@ -103,12 +104,27 @@ export const SPLIT_DEFINITIONS: Record<SplitType, SplitDefinition> = {
     icon: '💪',
     filterKey: 'Pecho',
     description: 'Empuje horizontal, press inclinado y extensión de tríceps'
+  },
+  core_hombros: {
+    key: 'core_hombros',
+    name: 'Core y Hombros',
+    badge: 'Core & Hombros (Deltoides / Abdomen)',
+    icon: '🛡️',
+    filterKey: 'Hombros',
+    description: 'Deltoides anterior, lateral, posterior y estabilidad central profunda'
   }
 };
 
 const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExercise>[]): SplitType | 'otro' => {
   const norm = (routine.name + ' ' + (routine.description || '')).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   
+  if ((norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) &&
+      (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal'))) {
+    return 'core_hombros';
+  }
+  if (norm.includes('core') || norm.includes('abdomen')) {
+    return 'core_hombros';
+  }
   if (norm.includes('pierna') || norm.includes('leg') || norm.includes('squat') || norm.includes('sentadilla') || norm.includes('cuad') || norm.includes('gluteo') || norm.includes('pantorrilla')) {
     return 'pierna';
   }
@@ -126,12 +142,17 @@ const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExe
   if (norm.includes('pecho') || norm.includes('push') || norm.includes('empuje') || norm.includes('banca')) {
     return 'pecho_triceps';
   }
+  if (norm.includes('hombro') || norm.includes('militar') || norm.includes('deltoid')) {
+    return 'core_hombros';
+  }
 
   // Verificar grupos musculares en los ejercicios
   const groups = rExercises.map(e => (e.muscle_group || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+  if (groups.some(g => g.includes('hombro')) && groups.some(g => g.includes('core') || g.includes('abdomen'))) return 'core_hombros';
   if (groups.some(g => g.includes('pierna') || g.includes('cuad') || g.includes('gluteo') || g.includes('pantorrilla'))) return 'pierna';
   if (groups.some(g => g.includes('espalda') || g.includes('bicep'))) return 'espalda_biceps';
   if (groups.some(g => g.includes('pecho') || g.includes('tricep'))) return 'pecho_triceps';
+  if (groups.some(g => g.includes('hombro') || g.includes('core') || g.includes('abdomen'))) return 'core_hombros';
 
   return 'otro';
 };
@@ -296,8 +317,23 @@ function App() {
     return getSavedActiveWorkout()?.sessionLogs || {};
   });
 
-  // Estado para expandir la imagen del ejercicio
-  const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
+  // Ejercicio actualmente activo/expandido en la sesión de entrenamiento (modo acordeón inteligente)
+  const [activeWorkoutExerciseId, setActiveWorkoutExerciseId] = useState<string | null>(() => {
+    const saved = getSavedActiveWorkout();
+    if (!saved || !saved.exercises || saved.exercises.length === 0) return null;
+    const incomplete = saved.exercises.find(ex => {
+      const series = saved.sessionLogs[ex.id] || [];
+      return series.length === 0 || series.some(s => !s.completed);
+    });
+    return incomplete ? incomplete.id : saved.exercises[0].id;
+  });
+
+  // Estado para previsualizar la técnica/imagen completa en modal (sin recortar)
+  const [previewExerciseImage, setPreviewExerciseImage] = useState<{
+    name: string;
+    imageUrl: string;
+    muscleGroup: string;
+  } | null>(null);
 
   const [isSavingProfile, setIsSavingProfile] = useState<boolean>(false);
   
@@ -869,8 +905,96 @@ function App() {
     if (isOnline) triggerSync();
   };
 
+  // --- GENERACIÓN DE 3 RUTINAS DE CORE Y HOMBROS ---
+  const seedCoreHombrosRoutines = async () => {
+    if (!currentUserId) return;
+    const now = new Date().toISOString();
+
+    const routinesToSeed = [
+      {
+        name: 'Core y Hombros: Fuerza & Estabilidad',
+        description: 'Press militar pesado con barra, trabajo deltoideo completo 3D y estabilidad de la zona media profunda.',
+        exercises: [
+          { name: 'Press militar con barra', muscle_group: 'Hombros', series: 4, reps: 8, weight: 65 },
+          { name: 'Elevaciones laterales con mancuernas', muscle_group: 'Hombros', series: 4, reps: 12, weight: 20 },
+          { name: 'Pájaros con mancuerna (posterior)', muscle_group: 'Hombros', series: 3, reps: 15, weight: 15 },
+          { name: 'Rueda abdominal (Ab Wheel)', muscle_group: 'Abdomen', series: 3, reps: 10, weight: 0 },
+          { name: 'Plancha con toque de hombros', muscle_group: 'Abdomen', series: 3, reps: 20, weight: 0 },
+          { name: 'Elevación de piernas colgado', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 0 }
+        ]
+      },
+      {
+        name: 'Core y Hombros: Hipertrofia 3D & Antirrotación',
+        description: 'Hipertrofia en los 3 ángulos del deltoides combinada con fuerza antirrotacional del core y poleas de tensión constante.',
+        exercises: [
+          { name: 'Press Arnold con mancuernas', muscle_group: 'Hombros', series: 4, reps: 10, weight: 35 },
+          { name: 'Elevaciones laterales en polea', muscle_group: 'Hombros', series: 4, reps: 12, weight: 15 },
+          { name: 'Face pull en polea alta con cuerda', muscle_group: 'Hombros', series: 4, reps: 15, weight: 35 },
+          { name: 'Press Pallof en polea', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 20 },
+          { name: 'Crunch en polea con cuerda', muscle_group: 'Abdomen', series: 4, reps: 15, weight: 50 },
+          { name: 'Plancha lateral con elevación', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 0 }
+        ]
+      },
+      {
+        name: 'Core y Hombros: Definición & Tensión Continua',
+        description: 'Aislamiento de deltoides bajo tensión continua con máquina y barra Z, sumado a control isométrico de abdomen y oblicuos.',
+        exercises: [
+          { name: 'Press de hombros en máquina Smith', muscle_group: 'Hombros', series: 4, reps: 10, weight: 50 },
+          { name: 'Elevaciones frontales con disco', muscle_group: 'Hombros', series: 3, reps: 12, weight: 25 },
+          { name: 'Remo al mentón con barra Z', muscle_group: 'Hombros', series: 3, reps: 12, weight: 45 },
+          { name: 'Hollow body hold (isométrico)', muscle_group: 'Abdomen', series: 3, reps: 45, weight: 0 },
+          { name: 'Giros rusos con disco (Russian twists)', muscle_group: 'Abdomen', series: 3, reps: 20, weight: 15 },
+          { name: 'Dead bug isométrico con mancuerna', muscle_group: 'Abdomen', series: 3, reps: 12, weight: 10 }
+        ]
+      }
+    ];
+
+    for (const rData of routinesToSeed) {
+      const exists = (routines || []).some(r => r.name.toLowerCase().trim() === rData.name.toLowerCase().trim() && r.deleted === 0);
+      if (exists) continue;
+
+      const routineId = generateUUID();
+      await db.routines.add({
+        id: routineId,
+        user_id: currentUserId,
+        name: rData.name,
+        description: rData.description,
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      });
+
+      let order = 0;
+      for (const ex of rData.exercises) {
+        await db.exercises.add({
+          id: generateUUID(),
+          routine_id: routineId,
+          name: ex.name,
+          muscle_group: ex.muscle_group,
+          series: ex.series,
+          reps: ex.reps,
+          weight: ex.weight,
+          order_index: order++,
+          deleted: 0,
+          created_at: now,
+          updated_at: now,
+          synced: 0
+        });
+      }
+    }
+
+    if (isOnline) {
+      triggerSync();
+    }
+  };
+
   // --- GENERACIÓN DE PLANTILLAS POR DEFECTO ---
-  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps' | 'EspaldaBiceps') => {
+  const generateTemplateRoutine = async (type: 'Push' | 'Pull' | 'Legs' | 'Fullbody' | 'PechoTriceps' | 'EspaldaBiceps' | 'CoreHombros') => {
+    if (type === 'CoreHombros') {
+      await seedCoreHombrosRoutines();
+      return;
+    }
     const routineId = generateUUID();
     const now = new Date().toISOString();
 
@@ -974,13 +1098,13 @@ function App() {
     }
   };
 
-  // Autocarga de las rutinas solicitadas ("Espalda y bíceps" y "Pecho y tríceps") si aún no existen
+  // Autocarga de las rutinas solicitadas ("Espalda y bíceps", "Pecho y tríceps" y "Core y hombros") si aún no existen
   useEffect(() => {
     if (!currentUserId || !routines) return;
 
     // 1. Espalda y bíceps
     const hasBackBiceps = routines.some(r =>
-      r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps'))
+      r.name.toLowerCase().includes('espalda') && (r.name.toLowerCase().includes('bíceps') || r.name.toLowerCase().includes('biceps')) && r.deleted === 0
     );
     const keyBack = `auto_loaded_espalda_biceps_${currentUserId}`;
     if (!hasBackBiceps && !localStorage.getItem(keyBack)) {
@@ -990,14 +1114,158 @@ function App() {
 
     // 2. Pecho y tríceps
     const hasChestTriceps = routines.some(r =>
-      r.name.toLowerCase().includes('pecho') && (r.name.toLowerCase().includes('tríceps') || r.name.toLowerCase().includes('triceps'))
+      r.name.toLowerCase().includes('pecho') && (r.name.toLowerCase().includes('tríceps') || r.name.toLowerCase().includes('triceps')) && r.deleted === 0
     );
     const keyChest = `auto_loaded_pecho_triceps_${currentUserId}`;
     if (!hasChestTriceps && !localStorage.getItem(keyChest)) {
       localStorage.setItem(keyChest, 'true');
       generateTemplateRoutine('PechoTriceps');
     }
+
+    // 3. Core y hombros (3 rutinas completas solicitadas)
+    const coreHombrosRoutines = routines.filter(r => {
+      const norm = (r.name + ' ' + (r.description || '')).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return (norm.includes('hombro') || norm.includes('deltoid') || norm.includes('militar')) && 
+             (norm.includes('core') || norm.includes('abdomen') || norm.includes('abdominal')) &&
+             r.deleted === 0;
+    });
+    const keyCoreHombros = `auto_loaded_core_hombros_3_${currentUserId}`;
+    if (coreHombrosRoutines.length < 3 && !localStorage.getItem(keyCoreHombros)) {
+      localStorage.setItem(keyCoreHombros, 'true');
+      seedCoreHombrosRoutines();
+    }
   }, [currentUserId, routines]);
+
+  // Deduplicación automática de rutinas: deja únicamente la más completa con descripción y ejercicios reales
+  useEffect(() => {
+    if (!currentUserId || !routines || routines.length === 0 || !exercises) return;
+
+    // 1. Limpieza de Espalda y Bíceps
+    const backBicepsRoutines = routines.filter(r => {
+      const name = r.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return name.includes('espalda') && name.includes('bicep');
+    });
+
+    if (backBicepsRoutines.length > 1) {
+      const scored = backBicepsRoutines.map(routine => {
+        const rExs = exercises.filter(ex => ex.routine_id === routine.id && ex.deleted === 0);
+        let score = 0;
+        // Bonificación por descripción detallada
+        if (routine.description && routine.description.trim().length > 10 && !routine.description.includes('Sin descripción')) {
+          score += 100;
+        }
+        score += rExs.length * 10;
+        // Bonificación por ejercicios genuinos de espalda y bíceps
+        rExs.forEach(ex => {
+          const m = (ex.muscle_group || '').toLowerCase();
+          const n = (ex.name || '').toLowerCase();
+          if (m.includes('espalda') || m.includes('bicep') || n.includes('jalon') || n.includes('remo') || n.includes('curl')) {
+            score += 15;
+          }
+          if (ex.weight && ex.weight > 0) score += 5;
+        });
+        return { routine, score, exercises: rExs };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+
+      // Conservamos la más completa (mayor puntaje) y eliminamos las duplicadas/incompletas
+      const duplicatesToDelete = scored.slice(1);
+      const now = new Date().toISOString();
+
+      duplicatesToDelete.forEach(async ({ routine, exercises: rExs }) => {
+        await db.routines.update(routine.id, {
+          deleted: 1,
+          synced: 0,
+          updated_at: now
+        });
+        for (const ex of rExs) {
+          await db.exercises.update(ex.id, {
+            deleted: 1,
+            synced: 0,
+            updated_at: now
+          });
+        }
+      });
+
+      if (isOnline) triggerSync();
+    }
+
+    // 2. Limpieza de Pecho y Tríceps duplicadas (si aplica)
+    const chestTricepsRoutines = routines.filter(r => {
+      const name = r.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      return name.includes('pecho') && name.includes('tricep');
+    });
+
+    if (chestTricepsRoutines.length > 1) {
+      const scoredChest = chestTricepsRoutines.map(routine => {
+        const rExs = exercises.filter(ex => ex.routine_id === routine.id && ex.deleted === 0);
+        let score = 0;
+        if (routine.description && routine.description.trim().length > 10 && !routine.description.includes('Sin descripción')) {
+          score += 100;
+        }
+        score += rExs.length * 10;
+        rExs.forEach(ex => {
+          const m = (ex.muscle_group || '').toLowerCase();
+          const n = (ex.name || '').toLowerCase();
+          if (m.includes('pecho') || m.includes('tricep') || n.includes('banca') || n.includes('press') || n.includes('cable')) {
+            score += 15;
+          }
+          if (ex.weight && ex.weight > 0) score += 5;
+        });
+        return { routine, score, exercises: rExs };
+      });
+
+      scoredChest.sort((a, b) => b.score - a.score);
+
+      const duplicatesChest = scoredChest.slice(1);
+      const now = new Date().toISOString();
+
+      duplicatesChest.forEach(async ({ routine, exercises: rExs }) => {
+        await db.routines.update(routine.id, {
+          deleted: 1,
+          synced: 0,
+          updated_at: now
+        });
+        for (const ex of rExs) {
+          await db.exercises.update(ex.id, {
+            deleted: 1,
+            synced: 0,
+            updated_at: now
+          });
+        }
+      });
+
+      if (isOnline) triggerSync();
+    }
+
+    // 3. Limpieza de rutinas duplicadas de Core y Hombros (si aplica)
+    const coreHombroNames = [
+      'Core y Hombros: Fuerza & Estabilidad',
+      'Core y Hombros: Hipertrofia 3D & Antirrotación',
+      'Core y Hombros: Definición & Tensión Continua'
+    ];
+    for (const rName of coreHombroNames) {
+      const matchingRoutines = routines.filter(r => r.name.toLowerCase().trim() === rName.toLowerCase().trim() && r.deleted === 0);
+      if (matchingRoutines.length > 1) {
+        const scored = matchingRoutines.map(routine => {
+          const rExs = exercises.filter(ex => ex.routine_id === routine.id && ex.deleted === 0);
+          const score = (routine.description?.length || 0) + rExs.length * 10;
+          return { routine, score, exercises: rExs };
+        }).sort((a, b) => b.score - a.score);
+
+        const duplicates = scored.slice(1);
+        const now = new Date().toISOString();
+        duplicates.forEach(async ({ routine, exercises: rExs }) => {
+          await db.routines.update(routine.id, { deleted: 1, synced: 0, updated_at: now });
+          for (const ex of rExs) {
+            await db.exercises.update(ex.id, { deleted: 1, synced: 0, updated_at: now });
+          }
+        });
+        if (isOnline) triggerSync();
+      }
+    }
+  }, [currentUserId, routines, exercises, isOnline, triggerSync]);
 
   // --- CRUD ACCIONES ---
   const handleOpenCreateRoutine = () => {
@@ -1191,6 +1459,10 @@ function App() {
     
     setWorkoutSessionLogs(initialSession);
     setWorkoutExercises(rExercises);
+    if (rExercises.length > 0) {
+      setActiveWorkoutExerciseId(rExercises[0].id);
+    }
+    setPreviewExerciseImage(null);
     setView('workout');
   };
 
@@ -1257,6 +1529,27 @@ function App() {
     list[seriesIndex] = series;
     copy[exerciseId] = list;
     setWorkoutSessionLogs(copy);
+
+    // Auto-avance inteligente: Si con esta serie se completaron TODAS las series de este ejercicio,
+    // avanzar automáticamente al siguiente ejercicio pendiente de la rutina
+    if (willBeCompleted) {
+      const isExerciseFinished = list.length > 0 && list.every(s => s.completed);
+      if (isExerciseFinished) {
+        const curIdx = workoutExercises.findIndex(e => e.id === exerciseId);
+        // Buscar el siguiente ejercicio en la rutina que aún tenga series incompletas
+        const nextIncomplete = workoutExercises.slice(curIdx + 1).find(e => {
+          const sList = copy[e.id] || [];
+          return sList.length === 0 || sList.some(s => !s.completed);
+        }) || workoutExercises.slice(0, curIdx).find(e => {
+          const sList = copy[e.id] || [];
+          return sList.length === 0 || sList.some(s => !s.completed);
+        });
+
+        if (nextIncomplete) {
+          setActiveWorkoutExerciseId(nextIncomplete.id);
+        }
+      }
+    }
   };
 
   const handleWorkoutValueChange = async (exerciseId: string, seriesIndex: number, field: 'weight' | 'reps', value: any) => {
@@ -1365,9 +1658,39 @@ function App() {
     setWorkoutRoutine(null);
     setWorkoutSessionLogs({});
     setWorkoutExercises([]);
+    setActiveWorkoutExerciseId(null);
+    setPreviewExerciseImage(null);
     setView('dashboard');
     if (isOnline) {
       triggerSync();
+    }
+  };
+
+  // Función para salir o cancelar el entrenamiento activo de forma segura
+  const handleExitWorkout = () => {
+    const allSeries = Object.values(workoutSessionLogs).flat();
+    const hasCompleted = allSeries.some(s => s.completed);
+    if (hasCompleted) {
+      if (confirm('¿Deseas salir del entrenamiento actual?\n\nLas series que ya completaste quedarán guardadas en tu historial.')) {
+        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+        setWorkoutRoutine(null);
+        setWorkoutSessionLogs({});
+        setWorkoutExercises([]);
+        setActiveWorkoutExerciseId(null);
+        setPreviewExerciseImage(null);
+        setView('dashboard');
+        if (isOnline) triggerSync();
+      }
+    } else {
+      if (confirm('¿Deseas cancelar el entrenamiento actual?')) {
+        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
+        setWorkoutRoutine(null);
+        setWorkoutSessionLogs({});
+        setWorkoutExercises([]);
+        setActiveWorkoutExerciseId(null);
+        setPreviewExerciseImage(null);
+        setView('dashboard');
+      }
     }
   };
 
@@ -1630,119 +1953,220 @@ function App() {
     );
   }
 
+  // Métricas rápidas del entrenamiento activo si está en curso
+  const activeWorkoutAllSeries = workoutRoutine ? Object.values(workoutSessionLogs).flat() : [];
+  const activeWorkoutCompletedCount = activeWorkoutAllSeries.filter(s => s.completed).length;
+  const activeWorkoutTotalCount = activeWorkoutAllSeries.length;
+  const activeWorkoutPct = activeWorkoutTotalCount > 0 ? Math.round((activeWorkoutCompletedCount / activeWorkoutTotalCount) * 100) : 0;
+
   return (
     <div className="flex flex-col min-h-screen pb-16 md:pb-8 bg-slate-950">
       {/* HEADER / BARRA DE CONEXIÓN */}
-      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-            <Dumbbell className="w-5 h-5 text-emerald-400" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold tracking-tight text-white m-0 leading-none">Gymstructor</h1>
-            <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Offline-First App</span>
-          </div>
-        </div>
-
-        {/* Navegación Desktop */}
-        {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
-          <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
-            <button
-              onClick={() => setView('dashboard')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'dashboard'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Dumbbell className="w-4 h-4" /> Rutinas
-            </button>
-            <button
-              onClick={() => setView('progress')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'progress'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <TrendingUp className="w-4 h-4" /> Progreso
-            </button>
-            <button
-              onClick={() => setView('community')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'community'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" /> Comunidad
-            </button>
-            <button
-              onClick={() => setView('history')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                view === 'history'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Calendar className="w-4 h-4" /> Historial
-            </button>
-            {workoutRoutine && (
+      <header 
+        className="sticky top-0 z-40 bg-slate-950/95 backdrop-blur-md border-b border-slate-900 px-4 py-2.5 sm:py-3 transition-all relative shadow-sm"
+        style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+      >
+        {view === 'workout' && workoutRoutine ? (
+          /* Cabecera Adaptativa para Modo Entrenamiento Activo */
+          <div className="flex items-center justify-between w-full gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
               <button
-                onClick={() => setView('workout')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse shadow-sm"
+                type="button"
+                onClick={() => setView('dashboard')}
+                className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                title="Pausar y volver al menú principal"
               >
-                <TrendingUp className="w-4 h-4" /> En Curso
+                <ArrowLeft className="w-4 h-4" />
               </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-2 w-2 relative shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <h2 className="text-sm sm:text-base font-extrabold text-white truncate m-0 leading-tight">
+                    {workoutRoutine.name}
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[10px] text-emerald-400 font-bold">
+                    {activeWorkoutCompletedCount} de {activeWorkoutTotalCount} series ({activeWorkoutPct}%)
+                  </span>
+                  <span className="text-[9px] text-slate-500 font-medium hidden xs:inline">
+                    {isOnline ? '• Offline-Ready' : '• Offline'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setView('dashboard')}
+                className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-2.5 sm:px-3 py-1.5 rounded-xl transition-all cursor-pointer font-semibold"
+                title="Pausar temporalmente"
+              >
+                Pausar
+              </button>
+              <button
+                type="button"
+                onClick={handleExitWorkout}
+                className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-2.5 sm:px-3 py-1.5 rounded-xl transition-all cursor-pointer font-semibold"
+                title="Salir del entrenamiento"
+              >
+                Salir
+              </button>
+            </div>
+          </div>
+        ) : view === 'edit_routine' ? (
+          /* Cabecera Adaptativa para Crear / Editar Rutina */
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2.5">
+              <button 
+                onClick={() => setView('dashboard')} 
+                className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                title="Volver"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-white m-0 leading-tight">
+                  {activeRoutine ? 'Editar Rutina' : 'Crear Rutina'}
+                </h2>
+                <span className="text-[10px] text-slate-400">Personaliza tus ejercicios y series</span>
+              </div>
+            </div>
+            <button
+              onClick={handleSaveRoutine}
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-500/10 transition-all"
+            >
+              <Save className="w-3.5 h-3.5" /> Guardar
+            </button>
+          </div>
+        ) : (
+          /* Cabecera Estándar de la Aplicación */
+          <>
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                <Dumbbell className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold tracking-tight text-white m-0 leading-none">Gymstructor</h1>
+                <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Offline-First App</span>
+              </div>
+            </div>
+
+            {/* Navegación Desktop */}
+            {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
+              <nav className="hidden md:flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-xl">
+                <button
+                  onClick={() => setView('dashboard')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'dashboard'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Dumbbell className="w-4 h-4" /> Rutinas
+                </button>
+                <button
+                  onClick={() => setView('progress')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'progress'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <TrendingUp className="w-4 h-4" /> Progreso
+                </button>
+                <button
+                  onClick={() => setView('community')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'community'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4" /> Comunidad
+                </button>
+                <button
+                  onClick={() => setView('history')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    view === 'history'
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" /> Historial
+                </button>
+                {workoutRoutine && (
+                  <button
+                    onClick={() => setView('workout')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse shadow-sm"
+                  >
+                    <TrendingUp className="w-4 h-4" /> En Curso
+                  </button>
+                )}
+              </nav>
             )}
-          </nav>
+
+            {/* Estatus e Interacción de Sincronización */}
+            <div className="flex items-center gap-2">
+              {/* Conexión */}
+              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${
+                isOnline 
+                  ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/20' 
+                  : 'bg-rose-950/30 text-rose-400 border-rose-500/20'
+              }`}>
+                {isOnline ? <Cloud className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+              </div>
+
+              {/* Sincronización */}
+              <button
+                onClick={() => triggerSync(true)}
+                disabled={!isOnline}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  pendingCount > 0
+                    ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 shadow-lg shadow-amber-500/20'
+                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 disabled:opacity-50'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>Sincronizar</span>
+                {pendingCount > 0 && (
+                  <span className="bg-slate-950 text-white rounded-full px-1.5 py-0.5 text-[9px] font-bold">
+                    {pendingCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Avatar estilo Netflix */}
+              <button
+                onClick={() => setShowProfileModal(true)}
+                className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 hover:scale-105 transition-all shadow-md shadow-emerald-500/10 cursor-pointer overflow-hidden relative group border border-emerald-500/20"
+                title="Ver Perfil"
+              >
+                {/* Ojos y sonrisa estilo Netflix */}
+                <svg viewBox="0 0 32 32" className="w-6 h-6 fill-slate-950 opacity-90">
+                  <circle cx="10" cy="11" r="2.5" />
+                  <circle cx="22" cy="11" r="2.5" />
+                  <path d="M 6 18 C 6 18, 9 24, 16 24 C 23 24, 26 18, 26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+                </svg>
+              </button>
+            </div>
+          </>
         )}
 
-        {/* Estatus e Interacción de Sincronización */}
-        <div className="flex items-center gap-2">
-          {/* Conexión */}
-          <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${
-            isOnline 
-              ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/20' 
-              : 'bg-rose-950/30 text-rose-400 border-rose-500/20'
-          }`}>
-            {isOnline ? <Cloud className="w-3.5 h-3.5" /> : <CloudOff className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+        {/* Barra de progreso de series del entrenamiento activo */}
+        {view === 'workout' && workoutRoutine && (
+          <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-slate-900/80 overflow-hidden">
+            <div 
+              className="h-full bg-emerald-400 transition-all duration-300 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
+              style={{ width: `${activeWorkoutPct}%` }}
+            />
           </div>
-
-          {/* Sincronización */}
-          <button
-            onClick={() => triggerSync(true)}
-            disabled={!isOnline}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-              pendingCount > 0
-                ? 'bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 disabled:opacity-50'
-            }`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>Sincronizar</span>
-            {pendingCount > 0 && (
-              <span className="bg-slate-950 text-white rounded-full px-1.5 py-0.5 text-[9px] font-bold">
-                {pendingCount}
-              </span>
-            )}
-          </button>
-
-          {/* Avatar estilo Netflix */}
-          <button
-            onClick={() => setShowProfileModal(true)}
-            className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-tr from-emerald-600 to-emerald-400 text-slate-950 hover:scale-105 transition-all shadow-md shadow-emerald-500/10 cursor-pointer overflow-hidden relative group border border-emerald-500/20"
-            title="Ver Perfil"
-          >
-            {/* Ojos y sonrisa estilo Netflix */}
-            <svg viewBox="0 0 32 32" className="w-6 h-6 fill-slate-950 opacity-90">
-              <circle cx="10" cy="11" r="2.5" />
-              <circle cx="22" cy="11" r="2.5" />
-              <path d="M 6 18 C 6 18, 9 24, 16 24 C 23 24, 26 18, 26 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" fill="none" />
-            </svg>
-          </button>
-        </div>
+        )}
       </header>
 
       {/* FEEDBACK DE ERROR DE SYNC */}
@@ -1766,54 +2190,47 @@ function App() {
       }`}>
 
         {/* Banner de Entrenamiento Activo (si se navegó a otra vista) */}
-        {workoutRoutine && view !== 'workout' && (() => {
-          const allSeries = Object.values(workoutSessionLogs).flat();
-          const completedCount = allSeries.filter(s => s.completed).length;
-          const totalCount = allSeries.length;
-          const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+        {workoutRoutine && view !== 'workout' && (
+          <div className="mb-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
+            <div className="absolute right-0 top-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none"></div>
 
-          return (
-            <div className="mb-6 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-3xl p-4 sm:p-5 shadow-2xl shadow-emerald-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none"></div>
-
-              <div className="flex items-center gap-3.5 min-w-0 relative z-10">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/10">
-                  <TrendingUp className="w-6 h-6 text-emerald-400 animate-pulse" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-md border border-emerald-500/30">
-                      Entrenamiento Activo
-                    </span>
-                    <span className="text-xs text-slate-300 font-semibold">
-                      {completedCount} de {totalCount} series completadas ({pct}%)
-                    </span>
-                  </div>
-                  <h4 className="text-base sm:text-lg font-extrabold text-white truncate mt-1">
-                    {workoutRoutine.name}
-                  </h4>
-                  {/* Barra de progreso rápida */}
-                  <div className="w-48 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
-                      style={{ width: `${pct}%` }}
-                    ></div>
-                  </div>
-                </div>
+            <div className="flex items-center gap-3.5 min-w-0 relative z-10">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/10">
+                <TrendingUp className="w-6 h-6 text-emerald-400 animate-pulse" />
               </div>
-
-              <div className="flex items-center gap-2 relative z-10 shrink-0">
-                <button
-                  onClick={() => setView('workout')}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-[1.02]"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>Reanudar Entrenamiento</span>
-                </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 bg-emerald-500/20 px-2.5 py-0.5 rounded-md border border-emerald-500/30">
+                    Entrenamiento Activo
+                  </span>
+                  <span className="text-xs text-slate-300 font-semibold">
+                    {activeWorkoutCompletedCount} de {activeWorkoutTotalCount} series completadas ({activeWorkoutPct}%)
+                  </span>
+                </div>
+                <h4 className="text-base sm:text-lg font-extrabold text-white truncate mt-1">
+                  {workoutRoutine.name}
+                </h4>
+                {/* Barra de progreso rápida */}
+                <div className="w-48 sm:w-64 h-1.5 bg-slate-800 rounded-full mt-2 overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
+                    style={{ width: `${activeWorkoutPct}%` }}
+                  ></div>
+                </div>
               </div>
             </div>
-          );
-        })()}
+
+            <div className="flex items-center gap-2 relative z-10 shrink-0">
+              <button
+                onClick={() => setView('workout')}
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black px-4 py-2.5 rounded-xl text-xs sm:text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20 cursor-pointer hover:scale-[1.02]"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Reanudar Entrenamiento</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 1. DASHBOARD VIEW */}
         {view === 'dashboard' && (() => {
@@ -1836,11 +2253,13 @@ function App() {
           const piernaRoutinesCount = countRoutinesForSplit('pierna');
           const espaldaBicepsRoutinesCount = countRoutinesForSplit('espalda_biceps');
           const pechoTricepsRoutinesCount = countRoutinesForSplit('pecho_triceps');
+          const coreHombrosRoutinesCount = countRoutinesForSplit('core_hombros');
 
           // 3. Análisis del historial semanal de entrenamientos para sugerir el grupo del día
           let lastPiernaTimestamp = 0;
           let lastEspaldaTimestamp = 0;
           let lastPechoTimestamp = 0;
+          let lastCoreHombrosTimestamp = 0;
           let mostRecentWorkoutTimestamp = 0;
           let mostRecentWorkoutSplit: SplitType | null = null;
 
@@ -1851,7 +2270,7 @@ function App() {
 
             const split = matchRoutineToSplit(routine, [ex]);
             const time = new Date(log.logged_at).getTime();
-            if (!isNaN(time) && (split === 'pierna' || split === 'espalda_biceps' || split === 'pecho_triceps')) {
+            if (!isNaN(time) && (split === 'pierna' || split === 'espalda_biceps' || split === 'pecho_triceps' || split === 'core_hombros')) {
               if (time > mostRecentWorkoutTimestamp) {
                 mostRecentWorkoutTimestamp = time;
                 mostRecentWorkoutSplit = split;
@@ -1859,6 +2278,7 @@ function App() {
               if (split === 'pierna' && time > lastPiernaTimestamp) lastPiernaTimestamp = time;
               if (split === 'espalda_biceps' && time > lastEspaldaTimestamp) lastEspaldaTimestamp = time;
               if (split === 'pecho_triceps' && time > lastPechoTimestamp) lastPechoTimestamp = time;
+              if (split === 'core_hombros' && time > lastCoreHombrosTimestamp) lastCoreHombrosTimestamp = time;
             }
           });
 
@@ -1869,6 +2289,8 @@ function App() {
           } else if (mostRecentWorkoutSplit === 'espalda_biceps') {
             suggestedSplitKey = 'pierna';
           } else if (mostRecentWorkoutSplit === 'pierna') {
+            suggestedSplitKey = 'core_hombros';
+          } else if (mostRecentWorkoutSplit === 'core_hombros') {
             suggestedSplitKey = 'pecho_triceps';
           } else {
             // Si no hay entrenamientos previos registrados, arrancar con Pierna
@@ -1880,7 +2302,9 @@ function App() {
             ? piernaRoutinesCount 
             : suggestedSplitKey === 'espalda_biceps' 
             ? espaldaBicepsRoutinesCount 
-            : pechoTricepsRoutinesCount;
+            : suggestedSplitKey === 'pecho_triceps'
+            ? pechoTricepsRoutinesCount
+            : coreHombrosRoutinesCount;
 
           // Generación del texto explicativo basado en descansos y semana
           const todayStr = new Date().toISOString().split('T')[0];
@@ -1927,7 +2351,8 @@ function App() {
               const isMatchSplit = 
                 (filterLower.includes('pierna') && split === 'pierna') ||
                 ((filterLower.includes('espalda') || filterLower.includes('bicep')) && split === 'espalda_biceps') ||
-                ((filterLower.includes('pecho') || filterLower.includes('tricep') || filterLower.includes('empuje')) && split === 'pecho_triceps');
+                ((filterLower.includes('pecho') || filterLower.includes('tricep') || filterLower.includes('empuje')) && split === 'pecho_triceps') ||
+                ((filterLower.includes('hombro') || filterLower.includes('core') || filterLower.includes('deltoid') || filterLower.includes('abdomen')) && split === 'core_hombros');
 
               const catLower = category.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
               const nameLower = routine.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -2039,11 +2464,12 @@ function App() {
                       <span className="text-[11px] text-slate-400">Toca para filtrar tus rutinas:</span>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
                       {[
                         { key: 'pierna', name: 'Pierna', icon: '🦵', filterKey: 'Piernas', count: piernaRoutinesCount, sub: 'Cuádriceps, Isquios, Glúteos' },
                         { key: 'espalda_biceps', name: 'Espalda & Bíceps', icon: '⚡', filterKey: 'Espalda', count: espaldaBicepsRoutinesCount, sub: 'Tirón vertical y flexión' },
                         { key: 'pecho_triceps', name: 'Pecho & Tríceps', icon: '💪', filterKey: 'Pecho', count: pechoTricepsRoutinesCount, sub: 'Empuje plano y extensión' },
+                        { key: 'core_hombros', name: 'Core & Hombros', icon: '🛡️', filterKey: 'Hombros', count: coreHombrosRoutinesCount, sub: 'Deltoides 3D y abdomen' },
                         { key: 'todas', name: 'Ver Todas', icon: '🎯', filterKey: 'Todas', count: routines?.length || 0, sub: 'Catálogo completo' }
                       ].map(group => {
                         const isSelected = routineMuscleFilter === group.filterKey;
@@ -2198,14 +2624,15 @@ function App() {
                 </div>
 
                 {isTemplatesExpanded && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3 mt-4 pt-4 border-t border-slate-900/80 animate-fade-in">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 sm:gap-3 mt-4 pt-4 border-t border-slate-900/80 animate-fade-in">
                     {[
                       { type: 'Push' as const, label: 'Push (Empuje)', sub: 'Pecho, Hombro, Tríceps', badge: 'Empuje' },
                       { type: 'Pull' as const, label: 'Pull (Jalón)', sub: 'Espalda, Bíceps, Trapecio', badge: 'Tirón' },
                       { type: 'Legs' as const, label: 'Legs (Pierna)', sub: 'Cuádriceps, Isquios, Gemelos', badge: 'Pierna' },
                       { type: 'Fullbody' as const, label: 'Full Body', sub: 'Cuerpo completo balanceado', badge: 'Global' },
                       { type: 'PechoTriceps' as const, label: 'Pecho & Tríceps', sub: 'Empuje plano, inclinado y tríceps', badge: 'Empuje' },
-                      { type: 'EspaldaBiceps' as const, label: 'Espalda & Bíceps', sub: 'Jalón vertical, remos y curl', badge: 'Tirón' }
+                      { type: 'EspaldaBiceps' as const, label: 'Espalda & Bíceps', sub: 'Jalón vertical, remos y curl', badge: 'Tirón' },
+                      { type: 'CoreHombros' as const, label: 'Core & Hombros', sub: 'Deltoides 3D, fuerza y abdomen', badge: 'Core' }
                     ].map(item => (
                       <button
                         key={item.type}
@@ -2287,6 +2714,7 @@ function App() {
                     { label: '🦵 Pierna', value: 'Piernas' },
                     { label: '⚡ Espalda & Bíceps', value: 'Espalda' },
                     { label: '💪 Pecho & Tríceps', value: 'Pecho' },
+                    { label: '🛡️ Core & Hombros', value: 'Hombros' },
                   ].map(tab => (
                     <button
                       key={tab.value}
@@ -2470,18 +2898,6 @@ function App() {
         {/* 2. CREAR / EDITAR RUTINA VIEW */}
         {view === 'edit_routine' && (
           <div className="space-y-5">
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setView('dashboard')} 
-                className="w-8 h-8 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white"
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </button>
-              <h2 className="text-lg font-bold text-white">
-                {activeRoutine ? 'Editar Rutina' : 'Crear Rutina'}
-              </h2>
-            </div>
-
             <div className="glass-card rounded-2xl p-4 border border-slate-900 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5">Nombre de la Rutina</label>
@@ -2715,251 +3131,308 @@ function App() {
 
         {/* 3. WORKOUT SESSION VIEW */}
         {view === 'workout' && workoutRoutine && (
-          <div className="space-y-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setView('dashboard')}
-                  className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer mr-1"
-                  title="Pausar y volver al menú principal"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <h2 className="text-lg font-bold text-white flex items-center gap-1.5">
-                  <TrendingUp className="w-5 h-5 text-emerald-400 animate-pulse" /> Entrenamiento Activo
-                </h2>
+          <div className="space-y-4">
+            {workoutRoutine.description && (
+              <div className="bg-slate-900/40 rounded-2xl p-3.5 sm:p-4 border border-slate-900/60">
+                <p className="text-xs text-slate-400 leading-relaxed">{workoutRoutine.description}</p>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setView('dashboard')}
-                  className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
-                  title="Pausar temporalmente"
-                >
-                  Pausar
-                </button>
-                <button
-                  onClick={() => {
-                    const hasCompleted = Object.values(workoutSessionLogs).flat().some(s => s.completed);
-                    if (hasCompleted) {
-                      if (confirm('¿Deseas salir del entrenamiento actual?\n\nLas series que ya completaste quedarán guardadas en tu historial.')) {
-                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
-                        setWorkoutRoutine(null);
-                        setWorkoutSessionLogs({});
-                        setWorkoutExercises([]);
-                        setView('dashboard');
-                        if (isOnline) triggerSync();
-                      }
-                    } else {
-                      if (confirm('¿Deseas cancelar el entrenamiento actual?')) {
-                        localStorage.removeItem(ACTIVE_WORKOUT_STORAGE_KEY);
-                        setWorkoutRoutine(null);
-                        setWorkoutSessionLogs({});
-                        setWorkoutExercises([]);
-                        setView('dashboard');
-                      }
-                    }
-                  }}
-                  className="text-xs bg-rose-950/30 hover:bg-rose-900/30 text-rose-400 border border-rose-500/20 px-3 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
-                >
-                  Salir
-                </button>
-              </div>
-            </div>
+            )}
 
-            <div className="bg-slate-900/40 rounded-2xl p-4 border border-slate-900/60">
-              <h3 className="font-extrabold text-white text-base leading-none">{workoutRoutine.name}</h3>
-              <p className="text-xs text-slate-400 mt-1.5">{workoutRoutine.description || 'Registrando carga y series.'}</p>
-            </div>
-
-            {/* Lista de ejercicios para el entrenamiento */}
-            <div className="space-y-4">
+            {/* Lista de ejercicios para el entrenamiento (Modo Acordeón Inteligente) */}
+            <div className="space-y-3 sm:space-y-4">
               {workoutExercises.map((ex, idx) => {
-                  const series = workoutSessionLogs[ex.id] || [];
-                  const allCompleted = series.length > 0 && series.every(s => s.completed);
+                const series = workoutSessionLogs[ex.id] || [];
+                const completedSeriesCount = series.filter(s => s.completed).length;
+                const totalSeriesCount = series.length;
+                const allCompleted = totalSeriesCount > 0 && completedSeriesCount === totalSeriesCount;
+                const isExpanded = activeWorkoutExerciseId === ex.id;
+                const imgUrl = ex.image_data || getExerciseImage(ex.name);
 
+                if (!isExpanded) {
+                  // --- ESTADO CONTRAÍDO (Resumen compacto del ejercicio) ---
                   return (
                     <div 
-                      key={ex.id} 
-                      className={`glass-card rounded-2xl border transition-all ${
-                        allCompleted ? 'border-emerald-500/30 bg-emerald-950/5' : 'border-slate-900'
+                      key={ex.id}
+                      onClick={() => setActiveWorkoutExerciseId(ex.id)}
+                      className={`glass-card rounded-2xl border transition-all cursor-pointer p-3.5 sm:p-4 hover:border-slate-700/80 group ${
+                        allCompleted 
+                          ? 'border-emerald-500/30 bg-emerald-950/10' 
+                          : completedSeriesCount > 0
+                          ? 'border-emerald-500/20 bg-slate-900/50 hover:bg-slate-900/70'
+                          : 'border-slate-800/80 bg-slate-900/40 hover:bg-slate-900/60'
                       }`}
                     >
-                       {/* Cabecera del ejercicio */}
-                      <div className="px-4 py-3 flex items-center justify-between border-b border-slate-900/40">
-                        <div>
-                          <span className="text-[10px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                            {ex.muscle_group}
-                          </span>
-                          <h4 className="font-bold text-white text-sm mt-1">{ex.name}</h4>
-                          {/* Sugerencia de la última sesión */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Número o Check */}
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 transition-colors ${
+                            allCompleted 
+                              ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20' 
+                              : completedSeriesCount > 0
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700/60'
+                          }`}>
+                            {allCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 shrink-0">
+                                {ex.muscle_group}
+                              </span>
+                              <h4 className="font-bold text-white text-sm truncate group-hover:text-emerald-300 transition-colors">
+                                {ex.name}
+                              </h4>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-[11px] font-semibold ${allCompleted ? 'text-emerald-400' : completedSeriesCount > 0 ? 'text-emerald-300' : 'text-slate-400'}`}>
+                                {completedSeriesCount} de {totalSeriesCount} series {allCompleted ? '✓' : ''}
+                              </span>
+                              {series.length > 0 && (
+                                <span className="text-[10px] text-slate-500 font-medium hidden xs:inline">
+                                  • {series[0].weight} lb × {series[0].reps}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Derecha: Botón de técnica + Chevron expandir */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {imgUrl && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewExerciseImage({
+                                  name: ex.name,
+                                  imageUrl: imgUrl,
+                                  muscleGroup: ex.muscle_group
+                                });
+                              }}
+                              className="p-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 transition-all cursor-pointer"
+                              title="Ver técnica del ejercicio"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <div className="p-1 rounded-lg text-slate-500 group-hover:text-slate-300 transition-colors">
+                            <ChevronDown className="w-4 h-4" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // --- ESTADO EXPANDIDO (Ejercicio activo en foco para registrar series) ---
+                return (
+                  <div 
+                    key={ex.id}
+                    className={`glass-card rounded-2xl border transition-all overflow-hidden ${
+                      allCompleted 
+                        ? 'border-emerald-500/40 bg-emerald-950/15 shadow-xl shadow-emerald-500/5' 
+                        : 'border-emerald-500/40 bg-slate-900/80 shadow-2xl shadow-emerald-500/5 ring-1 ring-emerald-500/20'
+                    }`}
+                  >
+                    {/* Cabecera del ejercicio expandido */}
+                    <div className="p-3.5 sm:p-4 border-b border-slate-800/80 flex items-start justify-between gap-3 bg-slate-950/40">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 mt-0.5 ${
+                          allCompleted 
+                            ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20' 
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse'
+                        }`}>
+                          {allCompleted ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-bold text-emerald-400 uppercase bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                              {ex.muscle_group}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-semibold">
+                              {completedSeriesCount} de {totalSeriesCount} series
+                            </span>
+                          </div>
+                          <h3 className="font-extrabold text-white text-base sm:text-lg mt-1 leading-tight">
+                            {ex.name}
+                          </h3>
                           {series.length > 0 && (
-                            <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
                               Sugerido (último): <span className="text-emerald-400 font-semibold">{series[0].weight} lb</span> × <span className="text-emerald-400 font-semibold">{series[0].reps} reps</span>
                             </p>
                           )}
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          {/* Botón para aplicar el peso a las siguientes series */}
-                          {series.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const firstWeight = series[0]?.weight;
-                                if (firstWeight !== undefined && firstWeight > 0) {
-                                  if (confirm(`¿Deseas aplicar ${firstWeight} a las siguientes series de "${ex.name}"?`)) {
-                                    handlePropagateSeriesValue(ex.id, 0, 'weight', firstWeight);
+                      </div>
+
+                      {/* Controles de la cabecera: Ver técnica + Aplicar a siguientes + Reordenar + Colapsar */}
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                        {/* Botón para abrir modal con la técnica/imagen completa sin recortar */}
+                        {imgUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewExerciseImage({
+                              name: ex.name,
+                              imageUrl: imgUrl,
+                              muscleGroup: ex.muscle_group
+                            })}
+                            className="text-[10px] font-bold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 px-2.5 py-1.5 rounded-xl border border-emerald-500/30 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm hover:scale-[1.02]"
+                            title="Ver imagen y técnica completa"
+                          >
+                            <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="hidden xs:inline">Ver técnica</span>
+                          </button>
+                        )}
+
+                        {/* Botón para aplicar el peso a las siguientes series */}
+                        {series.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const firstWeight = series[0]?.weight;
+                              if (firstWeight !== undefined && firstWeight > 0) {
+                                if (confirm(`¿Deseas aplicar ${firstWeight} a las siguientes series de "${ex.name}"?`)) {
+                                  handlePropagateSeriesValue(ex.id, 0, 'weight', firstWeight);
+                                }
+                              }
+                            }}
+                            className="text-[10px] font-semibold text-slate-300 hover:text-emerald-300 bg-slate-900 hover:bg-slate-800 px-2.5 py-1.5 rounded-xl border border-slate-800 transition-all flex items-center gap-1 cursor-pointer"
+                            title="Copiar peso de la serie 1 a las demás"
+                          >
+                            <RefreshCw className="w-3 h-3 text-emerald-400" />
+                            <span className="hidden sm:inline">Aplicar a siguientes</span>
+                          </button>
+                        )}
+
+                        {/* Botones de Reordenamiento */}
+                        <div className="flex items-center gap-0.5 bg-slate-950 p-0.5 rounded-xl border border-slate-850">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveExercise(ex.id, 'up')}
+                            className="p-1 rounded-lg text-slate-500 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+                            title="Subir orden"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === workoutExercises.length - 1}
+                            onClick={() => handleMoveExercise(ex.id, 'down')}
+                            className="p-1 rounded-lg text-slate-500 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+                            title="Bajar orden"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Botón para colapsar */}
+                        <button
+                          type="button"
+                          onClick={() => setActiveWorkoutExerciseId(null)}
+                          className="p-1.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer ml-0.5"
+                          title="Colapsar ejercicio"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Tabla de series (Foco 100% en el entrenamiento, sin imagen recortada) */}
+                    <div className="p-3 sm:p-4 space-y-2">
+                      <div className="grid grid-cols-12 text-[10px] font-bold text-slate-500 uppercase px-2 mb-1 tracking-wider">
+                        <span className="col-span-2">Serie</span>
+                        <span className="col-span-4 text-center">Peso (lb)</span>
+                        <span className="col-span-4 text-center">Reps</span>
+                        <span className="col-span-2 text-right">Completado</span>
+                      </div>
+
+                      {series.map((s, sIdx) => (
+                        <div 
+                          key={sIdx} 
+                          className={`grid grid-cols-12 items-center gap-1.5 p-2 sm:p-2.5 rounded-xl border transition-all ${
+                            s.completed 
+                              ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' 
+                              : 'bg-slate-950/60 border-slate-800/60 hover:border-slate-700'
+                          }`}
+                        >
+                          <span className="col-span-2 text-xs font-black pl-2">{sIdx + 1}</span>
+                          
+                          {/* Input Peso */}
+                          <div className="col-span-4 flex justify-center">
+                            <input
+                              type="number"
+                              step="0.5"
+                              disabled={s.completed}
+                              value={s.weight !== undefined ? s.weight : ''}
+                              onChange={e => {
+                                const val = e.target.value;
+                                handleWorkoutValueChange(ex.id, sIdx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
+                              }}
+                              onBlur={e => {
+                                const val = parseFloat(e.target.value);
+                                if (!isNaN(val) && val > 0) {
+                                  const remaining = series.slice(sIdx + 1).filter(item => !item.completed);
+                                  if (remaining.length > 0 && remaining.some(item => item.weight !== val)) {
+                                    if (confirm(`¿Deseas aplicar ${val} a las siguientes ${remaining.length} series de "${ex.name}"?`)) {
+                                      handlePropagateSeriesValue(ex.id, sIdx, 'weight', val);
+                                    }
                                   }
                                 }
                               }}
-                              className="text-[9px] font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-1 rounded-lg border border-emerald-500/20 transition-all flex items-center gap-1 cursor-pointer mr-1"
-                              title="Copiar peso a las siguientes series"
-                            >
-                              <RefreshCw className="w-3 h-3" /> Aplicar a siguientes
-                            </button>
-                          )}
-
-                          {/* Botones de Reordenamiento */}
-                          <div className="flex items-center gap-1 mr-1">
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => handleMoveExercise(ex.id, 'up')}
-                              className="p-1 rounded-lg bg-slate-950 border border-slate-900 text-slate-500 hover:text-white disabled:opacity-30 disabled:hover:text-slate-500 transition-colors cursor-pointer"
-                              title="Subir orden"
-                            >
-                              <ChevronUp className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === workoutExercises.length - 1}
-                              onClick={() => handleMoveExercise(ex.id, 'down')}
-                              className="p-1 rounded-lg bg-slate-950 border border-slate-900 text-slate-500 hover:text-white disabled:opacity-30 disabled:hover:text-slate-500 transition-colors cursor-pointer"
-                              title="Bajar orden"
-                            >
-                              <ChevronDown className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          
-                          {allCompleted && (
-                            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Imagen o Ilustración de Referencia */}
-                      {(() => {
-                        const imgUrl = ex.image_data || getExerciseImage(ex.name);
-                        const isExpanded = expandedExerciseId === ex.id;
-                        return imgUrl ? (
-                          <div 
-                            onClick={() => setExpandedExerciseId(isExpanded ? null : ex.id)}
-                            className={`w-full overflow-hidden bg-slate-950 relative border-b border-slate-900/40 flex items-center justify-center cursor-pointer transition-all duration-300 ${isExpanded ? 'h-72' : 'h-32'}`}
-                          >
-                            <img 
-                              src={imgUrl} 
-                              alt={ex.name} 
-                              className={`w-full h-full opacity-80 transition-all duration-300 ${isExpanded ? 'object-contain' : 'object-cover'}`}
+                              className="w-20 bg-slate-900 border border-slate-800 rounded-lg py-1.5 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 to-transparent pointer-events-none"></div>
-                            
-                            {/* Indicador visual de zoom */}
-                            <div className="absolute top-2 right-2 bg-slate-950/80 px-2 py-0.5 rounded-md text-[8px] font-bold text-slate-400 border border-slate-900 pointer-events-none tracking-wider uppercase">
-                              {isExpanded ? 'Ver menos' : 'Ampliar'}
-                            </div>
                           </div>
-                        ) : (
-                          // Placeholder estilizado con mancuerna
-                          <div className="w-full h-16 bg-slate-950/40 border-b border-slate-900/40 flex items-center gap-3 px-4 py-3">
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shrink-0">
-                              <Dumbbell className="w-4 h-4 text-emerald-400" />
-                            </div>
-                            <div>
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Ilustración Genérica</p>
-                              <p className="text-xs text-slate-300">Mantén buena técnica y rango completo</p>
-                            </div>
-                          </div>
-                        );
-                      })()}
 
-                      {/* Lista de series */}
-                      <div className="p-3 space-y-2">
-                        <div className="grid grid-cols-12 text-[10px] font-bold text-slate-500 uppercase px-2 mb-1">
-                          <span className="col-span-2">Serie</span>
-                          <span className="col-span-4 text-center">Peso (lb)</span>
-                          <span className="col-span-4 text-center">Reps</span>
-                          <span className="col-span-2 text-right">Completado</span>
+                          {/* Input Reps */}
+                          <div className="col-span-4 flex justify-center">
+                            <input
+                              type="number"
+                              disabled={s.completed}
+                              value={s.reps !== undefined ? s.reps : ''}
+                              onChange={e => {
+                                const val = e.target.value;
+                                handleWorkoutValueChange(ex.id, sIdx, 'reps', val === '' ? '' : (parseInt(val) || 0));
+                              }}
+                              className="w-20 bg-slate-900 border border-slate-800 rounded-lg py-1.5 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
+                            />
+                          </div>
+
+                          {/* Botón Completado */}
+                          <div className="col-span-2 flex justify-end pr-1">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleWorkoutSeries(ex.id, sIdx)}
+                              className={`w-7 h-7 rounded-xl flex items-center justify-center border transition-all cursor-pointer ${
+                                s.completed
+                                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20 hover:scale-105'
+                                  : 'bg-slate-900 text-slate-600 border-slate-800 hover:border-slate-700 hover:text-slate-400'
+                              }`}
+                            >
+                              <Check className="w-4 h-4 stroke-[3]" />
+                            </button>
+                          </div>
                         </div>
+                      ))}
 
-                        {series.map((s, idx) => (
-                          <div 
-                            key={idx} 
-                            className={`grid grid-cols-12 items-center gap-1 p-2 rounded-xl border transition-all ${
-                              s.completed 
-                                ? 'bg-emerald-950/20 border-emerald-500/20 text-emerald-300' 
-                                : 'bg-slate-900/40 border-slate-800/40'
-                            }`}
+                      {/* Botón para pasar al siguiente ejercicio si no es el último */}
+                      {idx < workoutExercises.length - 1 && (
+                        <div className="pt-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setActiveWorkoutExerciseId(workoutExercises[idx + 1].id)}
+                            className="text-xs text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer font-medium py-1 px-2"
                           >
-                            <span className="col-span-2 text-xs font-bold pl-2">{idx + 1}</span>
-                            
-                            {/* Inputs de Peso y Reps */}
-                            <div className="col-span-4 flex justify-center">
-                              <input
-                                type="number"
-                                step="0.5"
-                                disabled={s.completed}
-                                value={s.weight !== undefined ? s.weight : ''}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  handleWorkoutValueChange(ex.id, idx, 'weight', val === '' ? '' : (parseFloat(val) || 0));
-                                }}
-                                onBlur={e => {
-                                  const val = parseFloat(e.target.value);
-                                  if (!isNaN(val) && val > 0) {
-                                    const remaining = series.slice(idx + 1).filter(item => !item.completed);
-                                    if (remaining.length > 0 && remaining.some(item => item.weight !== val)) {
-                                      if (confirm(`¿Deseas aplicar ${val} a las siguientes ${remaining.length} series de "${ex.name}"?`)) {
-                                        handlePropagateSeriesValue(ex.id, idx, 'weight', val);
-                                      }
-                                    }
-                                  }
-                                }}
-                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 font-bold"
-                              />
-                            </div>
-                            <div className="col-span-4 flex justify-center">
-                              <input
-                                type="number"
-                                disabled={s.completed}
-                                value={s.reps !== undefined ? s.reps : ''}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  handleWorkoutValueChange(ex.id, idx, 'reps', val === '' ? '' : (parseInt(val) || 0));
-                                }}
-                                className="w-16 bg-slate-950 border border-slate-800 rounded-lg py-1 text-xs text-center text-white focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
-                              />
-                            </div>
-
-                            {/* Botón Completado */}
-                            <div className="col-span-2 flex justify-end pr-1">
-                              <button
-                                onClick={() => handleToggleWorkoutSeries(ex.id, idx)}
-                                className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all ${
-                                  s.completed
-                                    ? 'bg-emerald-500 text-slate-950 border-emerald-400'
-                                    : 'bg-slate-950 text-slate-600 border-slate-800 hover:border-slate-700'
-                                }`}
-                              >
-                                <Check className="w-3.5 h-3.5 stroke-[3px]" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                            <span>Siguiente: {workoutExercises[idx + 1].name}</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Terminar Entrenamiento */}
@@ -3095,7 +3568,10 @@ function App() {
 
       {/* BOTTOM NAVIGATION BAR (Persistente en vistas principales) */}
       {(view === 'dashboard' || view === 'progress' || view === 'history' || view === 'community') && (
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30">
+        <nav 
+          className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/90 backdrop-blur-lg border-t border-slate-900 px-6 py-2 flex items-center justify-around z-30"
+          style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+        >
           <button
             onClick={() => setView('dashboard')}
             className={`flex flex-col items-center gap-0.5 cursor-pointer transition-colors ${
@@ -3277,6 +3753,59 @@ function App() {
                 Cerrar Sesión
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE TÉCNICA E ILUSTRACIÓN COMPLETA (SIN RECORTES) */}
+      {previewExerciseImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in"
+          onClick={() => setPreviewExerciseImage(null)}
+        >
+          <div 
+            className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative overflow-hidden space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header del Modal */}
+            <div className="flex items-start justify-between gap-3 pb-2 border-b border-slate-800">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  {previewExerciseImage.muscleGroup} • Técnica & Postura
+                </span>
+                <h3 className="text-lg sm:text-xl font-extrabold text-white mt-1.5 leading-tight">
+                  {previewExerciseImage.name}
+                </h3>
+              </div>
+              <button
+                onClick={() => setPreviewExerciseImage(null)}
+                className="w-8 h-8 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Contenedor de la Imagen: COMPLETA, SIN RECORTES */}
+            <div className="w-full h-72 sm:h-80 bg-slate-950 rounded-2xl border border-slate-800/80 p-3 flex items-center justify-center overflow-hidden relative">
+              <img 
+                src={previewExerciseImage.imageUrl} 
+                alt={previewExerciseImage.name}
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+
+            {/* Consejos de postura y botón de volver */}
+            <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 text-xs text-slate-400 space-y-1">
+              <p className="font-semibold text-slate-300">💡 Indicaciones clave:</p>
+              <p>Mantén el rango de movimiento completo, controla la fase de bajada (excéntrica) y cuida la respiración durante cada repetición.</p>
+            </div>
+
+            <button
+              onClick={() => setPreviewExerciseImage(null)}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
+            >
+              Volver a las series
+            </button>
           </div>
         </div>
       )}
