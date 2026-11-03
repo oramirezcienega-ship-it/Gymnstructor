@@ -3071,6 +3071,7 @@ function App() {
                           <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Series</label>
                           <input
                             type="number"
+                            inputMode="numeric"
                             min="1"
                             max="10"
                             value={ex.series !== undefined ? ex.series : ''}
@@ -3085,6 +3086,7 @@ function App() {
                           <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Reps</label>
                           <input
                             type="number"
+                            inputMode="numeric"
                             min="1"
                             max="100"
                             value={ex.reps !== undefined ? ex.reps : ''}
@@ -3099,6 +3101,7 @@ function App() {
                           <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Peso (lb)</label>
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="0.5"
                             value={ex.weight !== undefined ? ex.weight : ''}
                             onChange={e => {
@@ -3363,6 +3366,7 @@ function App() {
                           <div className="col-span-4 flex justify-center">
                             <input
                               type="number"
+                              inputMode="decimal"
                               step="0.5"
                               disabled={s.completed}
                               value={s.weight !== undefined ? s.weight : ''}
@@ -3389,6 +3393,7 @@ function App() {
                           <div className="col-span-4 flex justify-center">
                             <input
                               type="number"
+                              inputMode="numeric"
                               disabled={s.completed}
                               value={s.reps !== undefined ? s.reps : ''}
                               onChange={e => {

@@ -1024,6 +1024,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Altura (cm)</label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       value={userHeight || ''}
                       onChange={e => setUserHeight(Number(e.target.value) || 0)}
                       placeholder="Ej: 175"
@@ -1153,6 +1154,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       placeholder="Ej: 75.4"
                       value={weightInput}
@@ -1175,6 +1177,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       placeholder="Ej: 24.2"
                       value={bmiInput}
@@ -1190,6 +1193,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       placeholder="Ej: 15.2"
                       value={fatInput}
@@ -1205,6 +1209,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.1"
                       placeholder="Ej: 42.1"
                       value={muscleInput}
@@ -1220,6 +1225,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       placeholder="Ej: 1650"
                       value={bmrInput}
                       onChange={e => setBmrInput(e.target.value)}
@@ -1234,6 +1240,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       placeholder="Ej: 28"
                       value={bodyAgeInput}
                       onChange={e => setBodyAgeInput(e.target.value)}
@@ -1248,6 +1255,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                     </label>
                     <input
                       type="number"
+                      inputMode="numeric"
                       placeholder="Ej: 5"
                       value={visceralFatInput}
                       onChange={e => setVisceralFatInput(e.target.value)}
@@ -1939,6 +1947,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   value={editWeight}
                   onChange={e => setEditWeight(e.target.value)}
@@ -1952,6 +1961,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   value={editBmi}
                   onChange={e => setEditBmi(e.target.value)}
@@ -1965,6 +1975,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   value={editFat}
                   onChange={e => setEditFat(e.target.value)}
@@ -1978,6 +1989,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.1"
                   value={editMuscle}
                   onChange={e => setEditMuscle(e.target.value)}
@@ -1991,6 +2003,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   value={editBmr}
                   onChange={e => setEditBmr(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500 text-center font-bold"
@@ -2003,6 +2016,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   value={editBodyAge}
                   onChange={e => setEditBodyAge(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 text-center font-bold"
@@ -2015,6 +2029,7 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   value={editVisceralFat}
                   onChange={e => setEditVisceralFat(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500 text-center font-bold"
