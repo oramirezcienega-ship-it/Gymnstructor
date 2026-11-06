@@ -7,6 +7,8 @@ import { supabase } from './supabaseClient';
 import { ProgressView } from './components/ProgressView';
 import { WorkoutHistoryView } from './components/WorkoutHistoryView';
 import {
+  Flame,
+  HeartPulse,
   Dumbbell,
   Plus,
   Trash2,
@@ -159,6 +161,29 @@ const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExe
 
 const ACTIVE_WORKOUT_STORAGE_KEY = 'gymstructor_active_workout_session';
 
+// --- Cardio final y estimación de calorías (fórmula MET: kcal = MET × kg × horas) ---
+const CARDIO_MINUTES = 30;
+const CARDIO_MET = 7.0; // Cardio moderado (trote suave, elíptica, bici)
+const STRENGTH_MET = 5.0; // Entrenamiento de pesas moderado-vigoroso
+const MINUTES_PER_SERIES = 2.5; // ~45 s de trabajo + descanso entre series
+const DEFAULT_WEIGHT_KG = 70;
+
+const estimateRoutineCalories = (rExercises: Partial<LocalExercise>[], weightKg?: number) => {
+  const kg = weightKg && weightKg > 0 ? weightKg : DEFAULT_WEIGHT_KG;
+  const totalSeries = rExercises.reduce((sum, ex) => sum + (Number(ex.series) || 0), 0);
+  const strengthMinutes = totalSeries * MINUTES_PER_SERIES;
+  const strengthKcal = Math.round(STRENGTH_MET * kg * (strengthMinutes / 60));
+  const cardioKcal = Math.round(CARDIO_MET * kg * (CARDIO_MINUTES / 60));
+  return {
+    strengthMinutes: Math.round(strengthMinutes),
+    strengthKcal,
+    cardioKcal,
+    totalMinutes: Math.round(strengthMinutes + CARDIO_MINUTES),
+    totalKcal: strengthKcal + cardioKcal,
+    usedDefaultWeight: !(weightKg && weightKg > 0)
+  };
+};
+
 interface SavedActiveWorkout {
   userId?: string;
   routine: LocalRoutine;
@@ -168,6 +193,7 @@ interface SavedActiveWorkout {
   exercises: LocalExercise[];
   startedAt?: string;
   lastUpdated?: string;
+  cardioDone?: boolean;
 }
 
 const getSavedActiveWorkout = (): SavedActiveWorkout | null => {
@@ -295,6 +321,10 @@ function App() {
     [currentUserId]
   );
 
+  const latestWeightKg = bodyMetrics && bodyMetrics.length > 0
+    ? [...bodyMetrics].reverse().find(m => Number(m.weight) > 0)?.weight
+    : undefined;
+
   const userRoutines = routines || [];
   const userRoutineIds = userRoutines.map(r => r.id);
   const userExercises = exercises?.filter(ex => userRoutineIds.includes(ex.routine_id)) || [];
@@ -365,6 +395,7 @@ function App() {
   const [workoutExercises, setWorkoutExercises] = useState<LocalExercise[]>(() => {
     return getSavedActiveWorkout()?.exercises || [];
   });
+  const [cardioDone, setCardioDone] = useState<boolean>(() => !!getSavedActiveWorkout()?.cardioDone);
 
   // Persistir en localStorage el estado del entrenamiento activo de forma reactiva
   useEffect(() => {
@@ -375,11 +406,12 @@ function App() {
         sessionLogs: workoutSessionLogs,
         exercises: workoutExercises,
         startedAt: getSavedActiveWorkout()?.startedAt || new Date().toISOString(),
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        cardioDone
       };
       localStorage.setItem(ACTIVE_WORKOUT_STORAGE_KEY, JSON.stringify(sessionData));
     }
-  }, [workoutRoutine, workoutSessionLogs, workoutExercises, currentUserId]);
+  }, [workoutRoutine, workoutSessionLogs, workoutExercises, currentUserId, cardioDone]);
 
   // Si cambia de usuario autenticado y el entrenamiento guardado pertenece a otro usuario, limpiarlo
   useEffect(() => {
@@ -1425,6 +1457,7 @@ function App() {
       }
     }
     setWorkoutRoutine(routine);
+    setCardioDone(false);
     const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
     
     // Inicializar la estructura del registro de series
@@ -2747,6 +2780,7 @@ function App() {
                     {filteredRoutines.map(routine => {
                       const rExercises = sortExercises((exercises || []).filter(ex => ex.routine_id === routine.id && ex.deleted === 0));
                       const detectedCategory = getRoutineCategory(routine, rExercises);
+                      const kcalInfo = estimateRoutineCalories(rExercises, latestWeightKg);
 
                       return (
                         <div 
@@ -2805,7 +2839,24 @@ function App() {
                                 {rExercises.length === 0 && (
                                   <span className="text-[11px] text-slate-500 italic">Sin ejercicios configurados aún</span>
                                 )}
+                                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-1 rounded-lg">
+                                  <HeartPulse className="w-3 h-3 shrink-0" />
+                                  Cardio {CARDIO_MINUTES} min (al final)
+                                </span>
                               </div>
+                            </div>
+
+                            {/* Estimación de calorías */}
+                            <div
+                              className="mt-3 flex items-center justify-between gap-2 bg-orange-500/10 border border-orange-500/20 rounded-xl px-3 py-2"
+                              title={`Fuerza ~${kcalInfo.strengthKcal} kcal + Cardio ~${kcalInfo.cardioKcal} kcal${kcalInfo.usedDefaultWeight ? ' (estimado con 70 kg; registra tu peso en Progreso)' : ''}`}
+                            >
+                              <span className="flex items-center gap-1.5 text-xs font-black text-orange-300">
+                                <Flame className="w-3.5 h-3.5" /> ~{kcalInfo.totalKcal} kcal
+                              </span>
+                              <span className="text-[10px] font-medium text-slate-400 text-right">
+                                Fuerza {kcalInfo.strengthKcal} + Cardio {kcalInfo.cardioKcal} · ~{kcalInfo.totalMinutes} min
+                              </span>
                             </div>
                           </div>
 
@@ -3439,6 +3490,63 @@ function App() {
                 );
               })}
             </div>
+
+            {/* Cardio final de 30 minutos + resumen de calorías */}
+            {(() => {
+              const kcalInfo = estimateRoutineCalories(workoutExercises, latestWeightKg);
+              return (
+                <div className={`glass-card rounded-2xl border p-3.5 sm:p-4 transition-all ${
+                  cardioDone ? 'border-sky-500/40 bg-sky-950/20' : 'border-slate-800/80'
+                }`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        cardioDone ? 'bg-sky-500 text-slate-950' : 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                      }`}>
+                        {cardioDone ? <Check className="w-4 h-4 stroke-[3]" /> : <HeartPulse className="w-4 h-4" />}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[9px] font-bold text-sky-300 uppercase bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/20">
+                          Cardio final
+                        </span>
+                        <h3 className="font-extrabold text-white text-sm sm:text-base mt-1 leading-tight">
+                          {CARDIO_MINUTES} minutos de cardio
+                        </h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          Caminadora, elíptica o bici a ritmo moderado · ~{kcalInfo.cardioKcal} kcal
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCardioDone(!cardioDone)}
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all cursor-pointer shrink-0 ${
+                        cardioDone
+                          ? 'bg-sky-500 text-slate-950 border-sky-400 shadow-md shadow-sky-500/20'
+                          : 'bg-slate-900 text-slate-600 border-slate-800 hover:border-slate-700 hover:text-slate-400'
+                      }`}
+                      title="Marcar cardio como completado"
+                    >
+                      <Check className="w-4 h-4 stroke-[3]" />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-sm font-black text-orange-300">
+                      <Flame className="w-4 h-4" /> ~{kcalInfo.totalKcal} kcal en total
+                    </span>
+                    <span className="text-[10px] text-slate-400 text-right">
+                      Fuerza {kcalInfo.strengthKcal} + Cardio {kcalInfo.cardioKcal} · ~{kcalInfo.totalMinutes} min
+                    </span>
+                  </div>
+                  {kcalInfo.usedDefaultWeight && (
+                    <p className="text-[10px] text-slate-500 mt-1.5">
+                      Estimado con 70 kg. Registra tu peso en Progreso para un cálculo más preciso.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Terminar Entrenamiento */}
             <button
