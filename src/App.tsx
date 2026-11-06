@@ -6,6 +6,7 @@ import { useSync } from './hooks/useSync';
 import { supabase } from './supabaseClient';
 import { ProgressView } from './components/ProgressView';
 import { WorkoutHistoryView } from './components/WorkoutHistoryView';
+import { CARDIO_MINUTES, CARDIO_MUSCLE_GROUP, estimateRoutineCalories, isCardioExercise } from './utils/calories';
 import {
   Flame,
   HeartPulse,
@@ -161,29 +162,6 @@ const matchRoutineToSplit = (routine: LocalRoutine, rExercises: Partial<LocalExe
 
 const ACTIVE_WORKOUT_STORAGE_KEY = 'gymstructor_active_workout_session';
 
-// --- Cardio final y estimación de calorías (fórmula MET: kcal = MET × kg × horas) ---
-const CARDIO_MINUTES = 30;
-const CARDIO_MET = 7.0; // Cardio moderado (trote suave, elíptica, bici)
-const STRENGTH_MET = 5.0; // Entrenamiento de pesas moderado-vigoroso
-const MINUTES_PER_SERIES = 2.5; // ~45 s de trabajo + descanso entre series
-const DEFAULT_WEIGHT_KG = 70;
-
-const estimateRoutineCalories = (rExercises: Partial<LocalExercise>[], weightKg?: number) => {
-  const kg = weightKg && weightKg > 0 ? weightKg : DEFAULT_WEIGHT_KG;
-  const totalSeries = rExercises.reduce((sum, ex) => sum + (Number(ex.series) || 0), 0);
-  const strengthMinutes = totalSeries * MINUTES_PER_SERIES;
-  const strengthKcal = Math.round(STRENGTH_MET * kg * (strengthMinutes / 60));
-  const cardioKcal = Math.round(CARDIO_MET * kg * (CARDIO_MINUTES / 60));
-  return {
-    strengthMinutes: Math.round(strengthMinutes),
-    strengthKcal,
-    cardioKcal,
-    totalMinutes: Math.round(strengthMinutes + CARDIO_MINUTES),
-    totalKcal: strengthKcal + cardioKcal,
-    usedDefaultWeight: !(weightKg && weightKg > 0)
-  };
-};
-
 interface SavedActiveWorkout {
   userId?: string;
   routine: LocalRoutine;
@@ -303,7 +281,9 @@ function App() {
     },
     [currentUserId]
   );
-  const exercises = useLiveQuery(() => db.exercises.where('deleted').equals(0).toArray());
+  const allExercises = useLiveQuery(() => db.exercises.where('deleted').equals(0).toArray());
+  // El cardio final se guarda como un ejercicio oculto por rutina: se excluye de listas y edición
+  const exercises = allExercises?.filter(ex => !isCardioExercise(ex));
   const workoutLogs = useLiveQuery(() => db.workout_logs.where('deleted').equals(0).sortBy('logged_at'));
   const profile = useLiveQuery(
     () => {
@@ -1384,6 +1364,7 @@ function App() {
 
     // Marcar como borrados los ejercicios que ya no están en la lista actual
     for (const oldEx of oldExercises) {
+      if (isCardioExercise(oldEx)) continue;
       const stillExists = routineExercises.some(ex => ex.id === oldEx.id);
       if (!stillExists) {
         await db.exercises.update(oldEx.id, {
@@ -1682,8 +1663,46 @@ function App() {
       }
     }
 
+    // Registrar el cardio final como log (minutos en reps_done) en un ejercicio oculto de la rutina
+    if (cardioDone) {
+      const existingCardio = await db.exercises
+        .where('routine_id').equals(workoutRoutine.id)
+        .and(e => e.deleted === 0 && isCardioExercise(e))
+        .first();
+      let cardioExerciseId = existingCardio?.id;
+      if (!cardioExerciseId) {
+        cardioExerciseId = generateUUID();
+        await db.exercises.put({
+          id: cardioExerciseId,
+          routine_id: workoutRoutine.id,
+          name: 'Cardio',
+          muscle_group: CARDIO_MUSCLE_GROUP,
+          series: 1,
+          reps: CARDIO_MINUTES,
+          weight: 0,
+          order_index: 9999,
+          deleted: 0,
+          created_at: now,
+          updated_at: now,
+          synced: 0
+        });
+      }
+      await db.workout_logs.put({
+        id: generateUUID(),
+        exercise_id: cardioExerciseId,
+        weight_lifted: 0,
+        reps_done: CARDIO_MINUTES,
+        logged_at: now,
+        deleted: 0,
+        created_at: now,
+        updated_at: now,
+        synced: 0
+      });
+      logsAdded++;
+    }
+
     if (logsAdded === 0) {
-      alert('Registra al menos una serie completada para guardar el entrenamiento.');
+      alert('Registra al menos una serie completada (o el cardio) para guardar el entrenamiento.');
       return;
     }
 
@@ -1691,6 +1710,7 @@ function App() {
     setWorkoutRoutine(null);
     setWorkoutSessionLogs({});
     setWorkoutExercises([]);
+    setCardioDone(false);
     setActiveWorkoutExerciseId(null);
     setPreviewExerciseImage(null);
     setView('dashboard');
@@ -3562,8 +3582,9 @@ function App() {
         {view === 'history' && (
           <WorkoutHistoryView
             workoutLogs={userWorkoutLogs}
-            exercises={exercises}
+            exercises={allExercises}
             routines={routines}
+            userWeightKg={latestWeightKg}
             onBack={() => setView('dashboard')}
             onStartWorkoutWithRoutine={handleStartWorkout}
             triggerSync={triggerSync}

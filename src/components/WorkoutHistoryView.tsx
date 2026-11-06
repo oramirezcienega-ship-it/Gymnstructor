@@ -12,8 +12,11 @@ import {
   Filter,
   ArrowLeft,
   Sparkles,
-  Layers
+  Layers,
+  Flame,
+  HeartPulse
 } from 'lucide-react';
+import { estimateCardioKcal, estimateStrengthKcal, isCardioExercise, DEFAULT_WEIGHT_KG } from '../utils/calories';
 
 interface WorkoutHistoryViewProps {
   workoutLogs: LocalWorkoutLog[] | undefined;
@@ -23,6 +26,7 @@ interface WorkoutHistoryViewProps {
   onStartWorkoutWithRoutine?: (routine: LocalRoutine) => void;
   triggerSync: (force?: boolean) => void;
   isOnline: boolean;
+  userWeightKg?: number;
 }
 
 interface GroupedExerciseLog {
@@ -56,6 +60,11 @@ interface WorkoutSessionGroup {
   totalReps: number;
   allSynced: boolean;
   logIds: string[];
+  cardioMinutes: number;
+  cardioLogIds: string[];
+  strengthKcal: number;
+  cardioKcal: number;
+  totalKcal: number;
 }
 
 export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
@@ -66,6 +75,7 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
   onStartWorkoutWithRoutine,
   triggerSync,
   isOnline,
+  userWeightKg,
 }) => {
   // Filtros de búsqueda
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -157,8 +167,18 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
       // Agrupar por ejercicio dentro de la sesión
       const exerciseGroupMap = new Map<string, GroupedExerciseLog>();
 
+      let cardioMinutes = 0;
+      const cardioLogIds: string[] = [];
+      const strengthLogs: LocalWorkoutLog[] = [];
+
       for (const log of cluster) {
         const associatedEx = exerciseMap.get(log.exercise_id);
+        if (isCardioExercise(associatedEx)) {
+          cardioMinutes += Number(log.reps_done) || 0;
+          cardioLogIds.push(log.id);
+          continue;
+        }
+        strengthLogs.push(log);
         const exId = log.exercise_id;
         const exName = associatedEx ? associatedEx.name : 'Ejercicio Eliminado';
         const muscleGroup = associatedEx ? associatedEx.muscle_group : 'General';
@@ -200,7 +220,7 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
       let routineName = 'Entrenamiento Libre';
       let routineId: string | undefined = undefined;
 
-      const firstEx = exerciseMap.get(firstLog.exercise_id);
+      const firstEx = exerciseMap.get((strengthLogs[0] || firstLog).exercise_id);
       if (firstEx && firstEx.routine_id) {
         const foundRoutine = routineMap.get(firstEx.routine_id);
         if (foundRoutine) {
@@ -209,9 +229,11 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
         }
       }
 
-      const totalVolume = cluster.reduce((sum, l) => sum + (l.weight_lifted * l.reps_done), 0);
-      const totalSeries = cluster.length;
-      const totalReps = cluster.reduce((sum, l) => sum + l.reps_done, 0);
+      const totalVolume = strengthLogs.reduce((sum, l) => sum + (l.weight_lifted * l.reps_done), 0);
+      const totalSeries = strengthLogs.length;
+      const totalReps = strengthLogs.reduce((sum, l) => sum + l.reps_done, 0);
+      const strengthKcal = estimateStrengthKcal(totalSeries, userWeightKg);
+      const cardioKcal = estimateCardioKcal(cardioMinutes, userWeightKg);
       const allSynced = cluster.every(l => l.synced === 1);
       const logIds = cluster.map(l => l.id);
 
@@ -228,13 +250,18 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
         totalSeries,
         totalReps,
         allSynced,
-        logIds
+        logIds,
+        cardioMinutes,
+        cardioLogIds,
+        strengthKcal,
+        cardioKcal,
+        totalKcal: strengthKcal + cardioKcal
       };
     });
 
     // Ordenar sesiones: más recientes primero
     return builtSessions.reverse();
-  }, [workoutLogs, exerciseMap, routineMap]);
+  }, [workoutLogs, exerciseMap, routineMap, userWeightKg]);
 
   // Estadísticas globales del historial
   const globalStats = useMemo(() => {
@@ -242,8 +269,12 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
     const totalSeries = sessions.reduce((sum, s) => sum + s.totalSeries, 0);
     const totalVolume = sessions.reduce((sum, s) => sum + s.totalVolume, 0);
     const lastSessionDate = sessions.length > 0 ? sessions[0].dateDisplay : null;
+    const totalKcal = sessions.reduce((sum, s) => sum + s.totalKcal, 0);
+    const cardioSessions = sessions.filter(s => s.cardioMinutes > 0).length;
 
     return {
+      totalKcal,
+      cardioSessions,
       totalSessions,
       totalSeries,
       totalVolume,
@@ -315,6 +346,21 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
     }
   };
 
+  // Eliminar el cardio registrado de una sesión
+  const handleDeleteCardio = async (logIds: string[]) => {
+    if (!confirm('¿Eliminar el cardio de este entrenamiento?')) return;
+    const now = new Date().toISOString();
+    try {
+      for (const logId of logIds) {
+        await db.workout_logs.update(logId, { deleted: 1, synced: 0, updated_at: now });
+      }
+      if (isOnline) triggerSync();
+    } catch (err) {
+      console.error(err);
+      alert('Error al eliminar el cardio.');
+    }
+  };
+
   // Eliminar una serie individual
   const handleDeleteSingleLog = async (logId: string) => {
     if (!confirm('¿Eliminar esta serie?')) return;
@@ -378,7 +424,7 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
 
       {/* KPI STATS BAR (DESKTOP OPTIMIZADO) */}
       {sessions.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
           {/* Total Sesiones */}
           <div className="glass-card rounded-2xl p-4 border border-slate-800/80">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Entrenamientos</span>
@@ -411,6 +457,18 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
               <span className="text-xs font-bold text-cyan-400">series</span>
             </div>
             <span className="text-[10px] text-slate-500 block mt-0.5">con repeticiones registradas</span>
+          </div>
+
+          {/* Calorías acumuladas */}
+          <div className="glass-card rounded-2xl p-4 border border-slate-800/80">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Calorías Quemadas</span>
+            <div className="flex items-baseline gap-1 mt-1">
+              <span className="text-2xl font-black text-white">~{globalStats.totalKcal.toLocaleString()}</span>
+              <span className="text-xs font-bold text-orange-400">kcal</span>
+            </div>
+            <span className="text-[10px] text-slate-500 block mt-0.5">
+              {globalStats.cardioSessions} {globalStats.cardioSessions === 1 ? 'sesión' : 'sesiones'} con cardio
+            </span>
           </div>
 
           {/* Promedio de Series por Sesión */}
@@ -531,6 +589,25 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
                           {session.totalVolume.toLocaleString()} lb <span className="text-[10px] text-slate-500 font-normal">volumen</span>
                         </span>
                       </div>
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <span
+                          className="text-xs font-black text-orange-300 bg-orange-500/10 border border-orange-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1"
+                          title={`Fuerza ~${session.strengthKcal} kcal + Cardio ~${session.cardioKcal} kcal${!userWeightKg ? ` (estimado con ${DEFAULT_WEIGHT_KG} kg)` : ''}`}
+                        >
+                          <Flame className="w-3 h-3" />
+                          ~{session.totalKcal} kcal
+                        </span>
+                        {session.cardioMinutes > 0 ? (
+                          <span className="text-xs font-bold text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2.5 py-0.5 rounded-lg flex items-center gap-1">
+                            <HeartPulse className="w-3 h-3" />
+                            Cardio {session.cardioMinutes} min
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-slate-500 bg-slate-900 border border-slate-800 px-2.5 py-0.5 rounded-lg">
+                            Sin cardio
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -627,6 +704,38 @@ export const WorkoutHistoryView: React.FC<WorkoutHistoryViewProps> = ({
                         </div>
                       </div>
                     ))}
+
+                    {session.cardioMinutes > 0 && (
+                      <div className={session.exercises.length > 0 ? 'pt-4' : ''}>
+                        <div className="flex items-center justify-between gap-2 bg-sky-500/5 border border-sky-500/20 rounded-xl p-3">
+                          <div className="flex items-center gap-2">
+                            <HeartPulse className="w-4 h-4 text-sky-300" />
+                            <h4 className="text-sm font-bold text-white">Cardio</h4>
+                            <span className="text-xs font-bold text-sky-300">{session.cardioMinutes} min</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-400">~{session.cardioKcal} kcal</span>
+                            <button
+                              onClick={() => handleDeleteCardio(session.cardioLogIds)}
+                              className="p-1 text-slate-600 hover:text-rose-400 rounded transition-all cursor-pointer"
+                              title="Eliminar cardio"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-4 flex items-center justify-between gap-2 text-xs">
+                      <span className="flex items-center gap-1.5 font-black text-orange-300">
+                        <Flame className="w-3.5 h-3.5" /> ~{session.totalKcal} kcal quemadas
+                      </span>
+                      <span className="text-[10px] text-slate-400 text-right">
+                        Fuerza {session.strengthKcal} + Cardio {session.cardioKcal}
+                        {!userWeightKg && ` · estimado con ${DEFAULT_WEIGHT_KG} kg`}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
